@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wecom-agent"
+version = "0.1.0"
+description = "Enterprise WeChat agent service"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "pydantic-settings",
+    "httpx",
+    "redis",
+    "python-dotenv",
+    "structlog",
+    "wechatpy[cryptography]==1.8.18",
+]
+
+[project.optional-dependencies]
+dev = [
+    "fakeredis",
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
+
+[project.scripts]
+wecom-agent-local = "agent_loop:main"
+
+[tool.setuptools]
+py-modules = ["agent_loop"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src", "src.*", "adapters", "adapters.*", "prompts", "smoke", "smoke.*"]
+
+[tool.setuptools.package-data]
+prompts = ["*.txt"]
+adapters = ["*.applescript"]
+
+[tool.ruff]
+target-version = "py311"
