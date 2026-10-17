@@ -90,10 +90,59 @@ python smoke.py
 
 `smoke.py` 默认只执行离线验证，不会向企微发送消息。
 
-## 贡献
+## 流程
 
-欢迎提交 Issue 或 Pull Request。请保持依赖最小化，为新模块补充 Protocol 与独立单测，并在提交前运行测试、Ruff 和 `smoke.py`。
+flowchart LR
+    A[微信CLI数据获取方式] --> B[实时监听<br>官方iLink协议]
+    A --> C[手动查询<br>本地数据库]
+    
+    subgraph B [实时监听方案]
+        B1[getUpdates长轮询] --> B2[Webhook接收]
+        B1 --> B3[消息自动推送]
+        B2 --> B4[消息推送到指定API]
+    end
 
-## License
+    subgraph C [手动查询方案]
+        C1[命令行主动调用] --> C2[查询本地加密数据库]
+    end
 
-本仓库目前未声明许可证。
+    B --> D[✅ 自动化场景友好]
+    C --> E[🔍 分析/查询场景友好]
+
+
+
+
+flowchart LR
+    subgraph A [用户交互层]
+        A1[微信用户]
+    end
+
+    subgraph B [企业微信平台]
+        B1[消息回调网关]
+    end
+
+    subgraph C [AI Agent核心处理层]
+        C1[消息接收与预处理]
+        C2[意图识别与分流]
+        C3[记忆管理]
+        C4[回复生成与治理]
+    end
+
+    subgraph D [能力与数据层]
+        D1[大模型API]
+        D2[知识库]
+        D3[业务系统API]
+        D4[工具库]
+    end
+
+    A -- 发送消息 --> B
+    B -- 推送消息 --> C1
+    C1 -- 清洗过滤 --> C2
+    C2 -- 简单查询/指令 --> D4
+    C2 -- 复杂咨询 --> C4
+    C3 -- 提供上下文 --> C4
+    D1 -- 生成回复 --> C4
+    D2 -- 检索信息 --> C4
+    D3 -- 获取数据 --> C4
+    C4 -- 治理与发送 --> B
+    B -- 回复消息 --> A
