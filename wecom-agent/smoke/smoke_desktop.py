@@ -133,7 +133,8 @@ async def run_desktop_smoke() -> None:
                 assert len(rows) == 1
                 row = rows[0]
                 assert all(
-                    row[field] == value for field, value in legal.model_dump().items()
+                    row[field] == value
+                    for field, value in legal.model_dump(exclude={"dedupe_key"}).items()
                 )
                 assert row["key"] == message_key(legal)
                 assert row["status"] == "dry_run"

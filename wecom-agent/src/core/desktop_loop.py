@@ -161,7 +161,7 @@ class AgentLoop:
                 if not self._authorized(msg):
                     stats["filtered"] += 1
                     continue
-                key = message_key(msg, self._bucket_seconds)
+                key = msg.dedupe_key or message_key(msg, self._bucket_seconds)
                 with bound_contextvars(msg_id=key):
                     if not await self._store.claim(msg, key):
                         stats["duplicate"] += 1

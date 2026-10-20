@@ -94,6 +94,7 @@ async def test_exact_schema_mapping_and_receive_only_argv() -> None:
         "time_display": None,
         "chat_type": "single",
         "is_self": False,
+        "dedupe_key": None,
     }
     argv = runner.calls[0]
     assert argv[:5] == ["wecom-cli", "chat", "messages", "list", "--json"]

@@ -97,20 +97,36 @@ async def test_appends_are_emitted_once_and_preserve_own_messages_for_loop_filte
     "changed",
     [[], ["old-a"], ["older", "old-a", "old-b"], ["old-b", "old-a"], ["replacement"]],
 )
-async def test_discontinuity_never_advances_the_accepted_snapshot(
+async def test_discontinuity_recovers_by_position_without_stalling(
     changed: list[str],
 ) -> None:
-    """Truncation, prepending, reordering and lost anchors cannot produce old replies."""
+    """Truncation, prepending, reordering and lost anchors refeed candidates by position."""
     old = [message("old-a"), message("old-b")]
-    new = message("new")
-    source = SnapshotSource([old, [message(value) for value in changed], [*old, new]])
+    changed_rows = [message(value) for value in changed]
+    source = SnapshotSource([old, changed_rows, changed_rows])
     tail = PersonalTailInbox(source, key_of=key_of)
     await tail.baseline()
     await tail.poll_unread()
-    with pytest.raises(TailError) as error:
-        await tail.poll_unread()
-    assert error.value.code == "TAIL_DISCONTINUITY"
-    assert await tail.poll_unread() == [new]
+    assert await tail.poll_unread() == changed_rows
+    assert await tail.poll_unread() == []
+
+
+@pytest.mark.asyncio
+async def test_discontinuity_reanchors_at_the_last_own_message() -> None:
+    """Recovery refeeds only the unanswered rows after the owner's latest send."""
+    old = [message("old")]
+    changed = [
+        message("stale"),
+        message("own", own=True),
+        message("new-a"),
+        message("new-b"),
+    ]
+    source = SnapshotSource([old, changed, changed])
+    tail = PersonalTailInbox(source, key_of=key_of)
+    await tail.baseline()
+    await tail.poll_unread()
+    assert await tail.poll_unread() == changed[2:]
+    assert await tail.poll_unread() == []
 
 
 @pytest.mark.asyncio
@@ -238,7 +254,24 @@ async def test_identical_fingerprints_are_left_to_the_loop_to_deduplicate() -> N
     tail = PersonalTailInbox(source, key_of=key_of)
     await tail.baseline()
     await tail.poll_unread()
-    assert await tail.poll_unread() == [repeated, repeated]
+    appended = await tail.poll_unread()
+    assert [item.content for item in appended] == ["same-minute-input"] * 2
+    keys = [item.dedupe_key or key_of(item) for item in appended]
+    assert keys == ["same-minute-input", "same-minute-input#2"]
+
+
+@pytest.mark.asyncio
+async def test_same_minute_resend_in_a_later_poll_gets_a_distinct_key() -> None:
+    """A resent copy appended by a later snapshot is not swallowed as a duplicate."""
+    old, repeated = message("old"), message("same-minute-input")
+    source = SnapshotSource([[old], [old, repeated], [old, repeated, repeated]])
+    tail = PersonalTailInbox(source, key_of=key_of)
+    await tail.baseline()
+    await tail.poll_unread()
+    assert await tail.poll_unread() == [repeated]
+    resent = await tail.poll_unread()
+    assert [item.content for item in resent] == ["same-minute-input"]
+    assert (resent[0].dedupe_key or key_of(resent[0])) == "same-minute-input#2"
 
 
 @pytest.mark.asyncio

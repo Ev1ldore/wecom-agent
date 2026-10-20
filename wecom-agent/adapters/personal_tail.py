@@ -37,8 +37,10 @@ class PersonalTailInbox:
     """Serialize baseline and polling while accepting only an unchanged prefix.
 
     A successful baseline is idempotent. The first poll consumes its buffered
-    suffix without rereading. Read failures, cancellation and discontinuities
-    leave the last accepted snapshot unchanged.
+    suffix without rereading. Read failures and cancellation leave the last
+    accepted snapshot unchanged. A polling discontinuity recovers by position:
+    re-anchor at the desktop owner's latest outgoing message and refeed the
+    non-own messages after it, letting the store's claim() deduplicate.
     """
 
     def __init__(
@@ -79,7 +81,28 @@ class PersonalTailInbox:
             failed = True
         if failed or any(not isinstance(key, str) or not key for key in keys):
             raise TailError("KEY_FAILED")
-        return snapshot, keys
+        # Disambiguate identical fingerprints inside one snapshot (for example
+        # the same minute-precision message resent within the same minute):
+        # the first occurrence stays untouched, later copies carry a suffixed
+        # dedupe_key so the store's claim() cannot swallow them as duplicates.
+        # Append-only snapshots keep each row's occurrence ordinal stable
+        # across reads and restarts.
+        seen: dict[str, int] = {}
+        unique_messages: list[Msg] = []
+        unique_keys: list[str] = []
+        for message, key in zip(snapshot, keys, strict=True):
+            occurrence = seen.get(key, 0) + 1
+            seen[key] = occurrence
+            if occurrence == 1:
+                unique_messages.append(message)
+                unique_keys.append(key)
+                continue
+            unique_key = f"{key}#{occurrence}"
+            unique_messages.append(
+                message.model_copy(update={"dedupe_key": unique_key})
+            )
+            unique_keys.append(unique_key)
+        return tuple(unique_messages), tuple(unique_keys)
 
     async def baseline(self) -> list[Msg]:
         """Read once successfully and preserve new messages after the last known key."""
@@ -103,8 +126,26 @@ class PersonalTailInbox:
             self._pending = snapshot[cut:]
             return list(prefix)
 
+    @staticmethod
+    def _recover_after_last_own(snapshot: tuple[Msg, ...]) -> tuple[Msg, ...]:
+        """Re-anchor after a discontinuity at the owner's latest own message.
+
+        Non-own messages after that point are unanswered candidates. The
+        store's claim() already deduplicates anything handled before, so
+        refeeding is safe and no incoming message is silently dropped.
+        """
+        anchor = -1
+        for index, message in enumerate(snapshot):
+            if message.is_self:
+                anchor = index
+        return snapshot[anchor + 1 :]
+
     async def poll_unread(self) -> list[Msg]:
-        """Return buffered new input once, then only strict tail appends."""
+        """Return buffered new input once, then strict tail appends.
+
+        When the snapshot is no longer a strict append, recover by position
+        instead of stalling until a manual restart.
+        """
         async with self._lock:
             if self._last_keys is None:
                 raise TailError("BASELINE_REQUIRED")
@@ -116,8 +157,9 @@ class PersonalTailInbox:
             if keys == self._last_keys:
                 return []
             length = len(self._last_keys)
-            if len(keys) <= length or keys[:length] != self._last_keys:
-                raise TailError("TAIL_DISCONTINUITY")
-            appended = snapshot[length:]
+            if len(keys) > length and keys[:length] == self._last_keys:
+                appended = snapshot[length:]
+            else:
+                appended = self._recover_after_last_own(snapshot)
             self._last_keys = keys
             return list(appended)

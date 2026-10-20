@@ -26,6 +26,7 @@ class Msg(BaseModel):
     time_display: str | None = None
     chat_type: Literal["single", "group"] = "single"
     is_self: bool = False
+    dedupe_key: str | None = None
 
     @model_validator(mode="after")
     def validate_time_precision(self) -> Self:

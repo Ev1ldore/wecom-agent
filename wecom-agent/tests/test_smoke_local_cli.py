@@ -195,7 +195,10 @@ async def test_fresh_proof_calls_real_model_adapter_once_then_replays_without_ll
         assert len(rows) == 1
         assert rows[0]["reply"] == REPLY
         assert rows[0]["status"] == "dry_run"
-        assert all(rows[0][key] == value for key, value in proof.model_dump().items())
+        assert all(
+            rows[0][key] == value
+            for key, value in proof.model_dump(exclude={"dedupe_key"}).items()
+        )
     finally:
         await store.aclose()
     output = capsys.readouterr().out

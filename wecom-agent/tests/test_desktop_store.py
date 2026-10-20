@@ -98,7 +98,10 @@ async def test_minute_message_survives_restart_without_fabricated_timestamp(
     try:
         assert not await reopened.claim(msg, "minute-key")
         row = (await reopened.records())[0]
-        assert all(row[field] == value for field, value in msg.model_dump().items())
+        assert all(
+            row[field] == value
+            for field, value in msg.model_dump(exclude={"dedupe_key"}).items()
+        )
         assert row["ts"] is None
         assert row["time_display"] == "  昨天12:11  "
         assert row["status"] == "dry_run"
@@ -280,7 +283,10 @@ async def test_store_protocol_preserves_all_input_and_result_fields(
         assert await store.claim(msg, "message-key")
         claimed = (await store.records())[0]
         assert claimed["status"] == "claimed"
-        assert all(claimed[field] == value for field, value in msg.model_dump().items())
+        assert all(
+            claimed[field] == value
+            for field, value in msg.model_dump(exclude={"dedupe_key"}).items()
+        )
         await store.finish(
             "message-key",
             "send_failed",

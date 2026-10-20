@@ -180,7 +180,8 @@ async def test_exact_personal_proof_calls_mocked_model_once_then_reopens_databas
         rows = await store.records()
         assert len(rows) == 1
         assert all(
-            rows[0][key] == value for key, value in proof_message().model_dump().items()
+            rows[0][key] == value
+            for key, value in proof_message().model_dump(exclude={"dedupe_key"}).items()
         )
         assert rows[0]["status"] == "dry_run" and rows[0]["reply"] == REPLY
     finally:

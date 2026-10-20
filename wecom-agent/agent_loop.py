@@ -232,7 +232,7 @@ async def run_personal(settings: DesktopSettings, *, once: bool) -> int:
                 and msg.chat_type == "single"
                 and not msg.is_self
             ):
-                key = message_key(msg, settings.dedup_bucket_seconds)
+                key = msg.dedupe_key or message_key(msg, settings.dedup_bucket_seconds)
                 if await store.claim(msg, key):
                     await store.finish(key, "baseline")
                     baseline_count += 1
