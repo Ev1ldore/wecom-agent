@@ -112,3 +112,59 @@ def test_entry_selects_native_mode_and_requires_explicit_live(monkeypatch):
 )
 def test_native_mode_refuses_combined_modes(other):
     assert agent_loop.main(["--wechat-native", other]) == 2
+
+
+@pytest.mark.asyncio
+async def test_assistant_uses_native_loop_with_memory_and_no_send(
+    tmp_path, monkeypatch
+):
+    import json
+
+    import adapters.wechat_native as native
+
+    chat = Chat(
+        [
+            [peer("历史")],
+            [peer("历史"), peer("记住：称呼=小李")],
+            [peer("历史"), peer("记住：称呼=小李"), peer("你好", "18:42")],
+            [peer("历史"), peer("记住：称呼=小李"), peer("你好", "18:42")],
+        ]
+    )
+    model = Model()
+    model.reply.return_value = json.dumps(
+        {"intent": "chat", "reply": "你好，小李", "citations": []}
+    )
+    templates = []
+
+    def make_model(*args, **kwargs):
+        templates.append(kwargs["template_name"])
+        return model
+
+    monkeypatch.setattr(native, "NativeRiChat", lambda **kw: chat)
+    monkeypatch.setattr(agent_loop, "HTTPReplyModel", make_model)
+
+    async def cycles(loop, **kwargs):
+        for _ in range(3):
+            await loop.run_once()
+        return 0
+
+    monkeypatch.setattr(agent_loop, "run_cycles", cycles)
+    settings = DesktopSettings(
+        _env_file=None,
+        dry_run=True,
+        assistant_enabled=True,
+        db_url="sqlite:///" + str(tmp_path / "native.db"),
+        llm_base_url="https://example.test/v1",
+        llm_model="fake",
+        llm_api_key=SecretStr("fake"),
+    )
+    assert await agent_loop._run_wechat_native_locked(settings, once=True) == 0
+    assert templates == ["assistant_reply.txt"]
+    context = json.loads(model.reply.call_args.args[0])
+    assert context["memory"][0]["value"] == "小李"
+    assert chat.sent == []
+    store = SQLiteStore(settings.sqlite_path)
+    records = await store.records()
+    await store.aclose()
+    assert [r["status"] for r in records] == ["baseline", "dry_run", "dry_run"]
+    assert records[-1]["time_display"] == "18:42"

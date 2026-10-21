@@ -1,0 +1,29 @@
+{
+  "whitelist": [
+    {
+      "conversation": "demo-alice",
+      "sender": "alice"
+    },
+    {
+      "conversation": "demo-bob",
+      "sender": "bob"
+    }
+  ],
+  "spam_terms": [
+    "刷单返利",
+    "博彩送彩金"
+  ],
+  "inbox": "examples/assistant/inbox",
+  "history_window": 12,
+  "poll_seconds": 0.2,
+  "max_replies_per_minute": 10,
+  "local_model": "qcwind/qwen3-8b-instruct-Q4-K-M:latest",
+  "media": {
+    "asr_python": ".venv-asr/bin/python",
+    "asr_model": "models/whisper",
+    "ocr_binary": "scripts/assistant-vision-ocr",
+    "ffmpeg": "/opt/homebrew/bin/ffmpeg",
+    "ffprobe": "/opt/homebrew/bin/ffprobe"
+  },
+  "prompt_template": "assistant_reply.txt"
+}

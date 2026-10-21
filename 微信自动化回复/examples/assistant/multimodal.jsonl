@@ -1,0 +1,5 @@
+{"id":"m1","conversation":"demo-alice","sender":"alice","kind":"file","attachment":"meeting.docx","text":"评审是什么时候，谁准备报告？"}
+{"id":"m2","conversation":"demo-alice","sender":"alice","kind":"voice","attachment":"voice.wav"}
+{"id":"m3","conversation":"demo-bob","sender":"bob","kind":"image","attachment":"meeting.png","text":"图片上写了什么？"}
+{"id":"m4","conversation":"demo-alice","sender":"alice","kind":"file","attachment":"budget.xlsx","text":"设备金额是多少？"}
+{"id":"m5","conversation":"demo-alice","sender":"alice","kind":"video","attachment":"meeting.mp4","text":"概括可读取的内容，说明分析范围。"}

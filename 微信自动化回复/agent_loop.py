@@ -6,6 +6,7 @@ import fcntl
 import logging
 import os
 import shutil
+import sys
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import contextmanager
@@ -418,6 +419,8 @@ async def _run_wechat_native_locked(settings: DesktopSettings, *, once: bool) ->
 
     if settings.wechat_ocr_contact.strip() not in {"", "Ri"}:
         raise SetupError("内置截图路径只允许微信 2 的 Ri 独立单聊窗口。")
+    if settings.assistant_enabled and not settings.dry_run:
+        raise SetupError("增强处理链只支持 dry-run；尚未实机验收，未操作微信。")
     chat = NativeRiChat(live=not settings.dry_run)
     await chat.activate()
     # Validate model credentials/template before opening the durable receive cursor.
@@ -425,10 +428,22 @@ async def _run_wechat_native_locked(settings: DesktopSettings, *, once: bool) ->
         settings.llm_base_url,
         settings.llm_api_key.get_secret_value(),
         settings.llm_model,
-        template_name=settings.wechat_ocr_template_name,
+        template_name=settings.assistant_template_name
+        if settings.assistant_enabled
+        else settings.wechat_ocr_template_name,
     ) as model:
         store = SQLiteStore(settings.sqlite_path)
+        assistant = None
         try:
+            if settings.assistant_enabled:
+                from src.core.assistant.desktop import DesktopAssistant
+
+                assistant = DesktopAssistant(
+                    model,
+                    settings.sqlite_path.with_suffix(".assistant.db"),
+                    chat=IDENTITY,
+                    sender=IDENTITY,
+                )
             known = frozenset()
             if settings.dry_run:
                 known = frozenset(
@@ -466,11 +481,14 @@ async def _run_wechat_native_locked(settings: DesktopSettings, *, once: bool) ->
                 dry_run=settings.dry_run,
                 bucket_seconds=settings.dedup_bucket_seconds,
                 reply_preview=chat if settings.dry_run else None,
+                message_processor=assistant,
             )
             return await run_cycles(
                 loop, once=once, interval=settings.poll_interval_seconds
             )
         finally:
+            if assistant is not None:
+                await assistant.aclose()
             await store.aclose()
 
 
@@ -609,6 +627,27 @@ async def _recover_personal_drafts(
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Offer offline/demo polling and explicitly enabled Ri member-account sends."""
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if "--offline-assistant" in arguments:
+        if any(
+            flag in arguments
+            for flag in (
+                "--live",
+                "--wechat-native",
+                "--personal",
+                "--wechat",
+                "--wechat-ocr",
+                "--wechat-login",
+                "--demo",
+                "--assistant",
+            )
+        ):
+            print("离线增强入口不能与真实客户端或其他入口组合；未读取 .env。")
+            return 2
+        from src.core.assistant.cli import main as assistant_main
+
+        arguments.remove("--offline-assistant")
+        return assistant_main(arguments) or 0
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--once", action="store_true", help="等待首个时间窗口后轮询一轮并退出"
@@ -646,9 +685,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--live", action="store_true", help="只在个人 Ri/微信原会话启用真实自动回复"
     )
+    parser.add_argument(
+        "--assistant",
+        action="store_true",
+        help="为 --wechat-native dry-run 启用记忆和意图处理；不支持 --live",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
+        if args.assistant and (not args.wechat_native or args.live):
+            raise SetupError(
+                "--assistant 仅支持 --wechat-native 的 dry-run，新增处理链尚未实机验收"
+            )
         if args.wechat_native and any(
             (args.demo, args.personal, args.wechat, args.wechat_ocr, args.wechat_login)
         ):
@@ -666,6 +714,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             asyncio.run(run_desktop_smoke())
             return 0
         settings = DesktopSettings()
+        if args.assistant:
+            settings = settings.model_copy(update={"assistant_enabled": True})
         personal_selected = args.personal or settings.inbox_backend == "personal"
         wechat_selected = args.wechat or settings.inbox_backend == "wechat_ilink"
         wechat_ocr_selected = args.wechat_ocr or settings.inbox_backend == "wechat_ocr"

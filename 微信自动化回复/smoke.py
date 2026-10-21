@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Awaitable
 from typing import Protocol
 
+from smoke.smoke_assistant import run_assistant_smoke
 from smoke.smoke_desktop import run_desktop_smoke, run_wx2_smoke
 from smoke.smoke_loop import run_offline_loop
 from smoke.smoke_personal import run_personal_smoke, run_realtime_smoke
@@ -31,6 +32,7 @@ def main() -> int:
         await run_realtime_smoke()
         await run_wx2_smoke()
         await run_native_smoke()
+        await run_assistant_smoke()
 
     asyncio.run(run_all())
     return 0

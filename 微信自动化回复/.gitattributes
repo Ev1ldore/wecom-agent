@@ -1,0 +1,2 @@
+# PDF cross-reference byte offsets must not undergo text normalization.
+examples/assistant/inbox/*.pdf binary

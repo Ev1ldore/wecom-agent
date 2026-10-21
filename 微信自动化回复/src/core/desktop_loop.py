@@ -46,6 +46,18 @@ class ReplyPreviewProtocol(Protocol):
         raise NotImplementedError
 
 
+class MessageProcessorProtocol(Protocol):
+    """Provide optional contextual replies without owning desktop sends."""
+
+    async def reply_message(self, msg: Msg, key: str) -> str | None:
+        """Return a draft, or None when policy pauses/filters this message."""
+        raise NotImplementedError
+
+    async def observe_self(self, msg: Msg) -> None:
+        """Record manual takeover for the already verified chat."""
+        raise NotImplementedError
+
+
 def message_key(msg: Msg, bucket_seconds: int = 5) -> str:
     """Keep second buckets stable and use the exact minute label without an epoch."""
     if type(bucket_seconds) is not int or bucket_seconds <= 0:
@@ -94,6 +106,7 @@ class AgentLoop:
         monotonic: Callable[[], float] = time.monotonic,
         emit: Callable[[str], None] = print,
         reply_preview: ReplyPreviewProtocol | None = None,
+        message_processor: MessageProcessorProtocol | None = None,
     ) -> None:
         """Require explicit chat and agent identities for every polling cycle."""
         if not allowed_chat.strip() or not allowed_sender.strip():
@@ -112,6 +125,9 @@ class AgentLoop:
         self._monotonic = monotonic
         self._emit = emit
         self._reply_preview = reply_preview
+        if message_processor is not None and not dry_run:
+            raise ValueError("增强处理链仅允许 dry-run，尚未实机验证")
+        self._message_processor = message_processor
         self._consecutive_send_failures: int = 0
         self._paused_until: float = 0.0
         self._pending: list[Msg] = []
@@ -158,6 +174,12 @@ class AgentLoop:
                 messages = await self._inbox.poll_unread()
                 stats["polled"] = len(messages)
             for index, msg in enumerate(messages):
+                if (
+                    self._message_processor is not None
+                    and msg.is_self
+                    and msg.chat == self._allowed_chat
+                ):
+                    await self._message_processor.observe_self(msg)
                 if not self._authorized(msg):
                     stats["filtered"] += 1
                     continue
@@ -169,7 +191,17 @@ class AgentLoop:
                         continue
                     try:
                         async with asyncio.timeout(LLM_TIMEOUT_SECONDS):
-                            reply = await self._llm.reply(msg.content)
+                            if self._message_processor is None:
+                                reply = await self._llm.reply(msg.content)
+                            else:
+                                reply = await self._message_processor.reply_message(
+                                    msg, key
+                                )
+                                if reply is None:
+                                    await self._store.finish(key, "assistant_filtered")
+                                    stats["filtered"] += 1
+                                    logger.info("assistant_message_filtered")
+                                    continue
                         if not isinstance(reply, str) or not reply.strip():
                             raise ValueError("The model returned no textual reply")
                     except Exception as exc:  # noqa: BLE001 - Persist failure and continue safely.

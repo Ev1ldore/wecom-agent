@@ -39,6 +39,8 @@ class DesktopSettingsProtocol(Protocol):
     db_url: str
     poll_interval_seconds: float
     dedup_bucket_seconds: int
+    assistant_enabled: bool
+    assistant_template_name: str
 
 
 class DesktopSettings(BaseSettings):
@@ -74,6 +76,8 @@ class DesktopSettings(BaseSettings):
     db_url: str = "sqlite:///./agent.db"
     poll_interval_seconds: float = Field(default=2.0, ge=0.1, le=60)
     dedup_bucket_seconds: int = Field(default=5, ge=1, le=300)
+    assistant_enabled: bool = False
+    assistant_template_name: str = "assistant_reply.txt"
 
     @field_validator("allowed_user_id")
     @classmethod
@@ -84,7 +88,10 @@ class DesktopSettings(BaseSettings):
         return value
 
     @field_validator(
-        "llm_template_name", "personal_llm_template_name", "wechat_ocr_template_name"
+        "llm_template_name",
+        "personal_llm_template_name",
+        "wechat_ocr_template_name",
+        "assistant_template_name",
     )
     @classmethod
     def require_template_filename(cls, value: str, info: ValidationInfo) -> str:

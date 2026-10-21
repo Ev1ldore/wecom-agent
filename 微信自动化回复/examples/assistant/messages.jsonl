@@ -1,0 +1,8 @@
+{"id":"1","conversation":"demo-alice","sender":"alice","kind":"text","text":"记住：回复风格=简短中文"}
+{"id":"2","conversation":"demo-alice","sender":"alice","kind":"text","text":"我们正在讨论青竹项目的评审安排。"}
+{"id":"3","conversation":"demo-alice","sender":"alice","kind":"file","attachment":"meeting.txt","text":"评审几点开始，在哪里？"}
+{"id":"4","conversation":"demo-alice","sender":"alice","kind":"text","text":"刚才那个会议是谁准备性能报告？"}
+{"id":"5","conversation":"outside","sender":"unknown","kind":"text","text":"你好"}
+{"id":"6","conversation":"demo-bob","sender":"bob","kind":"text","text":"你知道我的回复偏好吗？"}
+{"id":"7","conversation":"demo-alice","sender":"alice","kind":"text","text":"刷单返利"}
+{"id":"3","conversation":"demo-alice","sender":"alice","kind":"file","attachment":"meeting.txt","text":"评审几点开始，在哪里？"}
