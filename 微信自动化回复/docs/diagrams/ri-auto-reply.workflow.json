@@ -1,0 +1,146 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "微信 2 · Ri 自动回复流程",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    {
+      "id": "process",
+      "label": "自动回复主流程"
+    },
+    {
+      "id": "preview",
+      "label": "默认预览",
+      "variant": "exception"
+    }
+  ],
+  "mainPath": [
+    "session",
+    "read",
+    "dedup",
+    "llm",
+    "submit",
+    "verify"
+  ],
+  "nodes": [
+    {
+      "id": "session",
+      "lane": "process",
+      "col": 0,
+      "type": "security",
+      "label": "锁定 Ri 与启动基线",
+      "sublabel": "live 只处理新增消息",
+      "width": 166
+    },
+    {
+      "id": "read",
+      "lane": "process",
+      "col": 1,
+      "type": "frontend",
+      "label": "截图 OCR 与尾部校验",
+      "sublabel": "原始分钟，过滤本人消息",
+      "width": 166
+    },
+    {
+      "id": "dedup",
+      "lane": "process",
+      "col": 2,
+      "type": "database",
+      "label": "SQLite 持久去重",
+      "sublabel": "先占位，重复消息跳过",
+      "width": 166
+    },
+    {
+      "id": "llm",
+      "lane": "process",
+      "col": 3,
+      "type": "cloud",
+      "label": "模型生成回复",
+      "sublabel": "按配置调用模型服务",
+      "width": 166
+    },
+    {
+      "id": "submit",
+      "lane": "process",
+      "col": 4,
+      "type": "security",
+      "label": "核对后输入并发送",
+      "sublabel": "live：草稿核对，提交一次",
+      "width": 166
+    },
+    {
+      "id": "verify",
+      "lane": "process",
+      "col": 5,
+      "type": "database",
+      "label": "核对气泡与输入区",
+      "sublabel": "匹配记 sent，否则未知",
+      "width": 166
+    },
+    {
+      "id": "draft",
+      "lane": "preview",
+      "col": 3,
+      "type": "database",
+      "label": "保存草稿，不发送",
+      "sublabel": "默认 dry-run",
+      "width": 166
+    }
+  ],
+  "edges": [
+    {
+      "from": "session",
+      "to": "read",
+      "role": "main"
+    },
+    {
+      "from": "read",
+      "to": "dedup",
+      "role": "main"
+    },
+    {
+      "from": "dedup",
+      "to": "llm",
+      "role": "main"
+    },
+    {
+      "from": "llm",
+      "to": "submit",
+      "role": "main",
+      "label": "live"
+    },
+    {
+      "from": "submit",
+      "to": "verify",
+      "role": "main"
+    },
+    {
+      "from": "llm",
+      "to": "draft",
+      "role": "branch",
+      "label": "dry-run",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "暂停与未知结果",
+      "items": [
+        "窗口变化、人工草稿、OCR 歧义或历史断裂：暂停该轮",
+        "写入后的超时、取消或回执不明：send_unknown，不自动重发"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "当前验收范围",
+      "items": [
+        "微信 2 4.1.15，人工指定并代码固定的 Ri 前台独立单聊",
+        "sent 只确认本机提交；群聊、媒体、后台与其他联系人未验证"
+      ]
+    }
+  ]
+}

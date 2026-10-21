@@ -1,0 +1,17 @@
+.env
+__pycache__/
+*.db
+*.db-wal
+*.db-shm
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+logs/
+.wechat_ilink.json
+.wechat_ilink_state.json
+.wechat_ilink_qr.png
+config.json
+all_keys.json

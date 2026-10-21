@@ -1,148 +1,66 @@
-# wecom-agent
+# 微信与企业微信自动回复
 
-本地优先的企业微信个人单聊自动回复 MVP：从已验证的桌面会话读取新消息，经 LLM 生成回复，再由本人企微账号在原会话中发送；默认仅 dry-run，不会真实发送消息。
+当前已在 macOS 的 **微信 2 4.1.15 → Ri 独立单聊**跑通新消息读取、真实模型生成和本人原会话提交。接入通过客户端内置截图与原生键鼠操作完成，无需 wx-cli、客户端私有数据库或密钥文件。
 
-![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Local%20MVP-2563EB)
+2026-10-21 本轮验收结束后，自动回复进程已按用户要求停止；编辑或阅读本文不会启动监听。
 
-## 特性
+## 项目入口
 
-- 仅处理已验证的 Ri 外部单聊，过滤自身消息、系统消息和不在白名单内的消息。
-- 读取企微原始显示时间，按分钟精度保存，不伪造秒级时间或接收时间。
-- 以 SQLite 持久化消息去重、LLM 草稿和发送结果，避免重启后重复处理。
-- 默认 dry-run，只记录拟发送内容；`--live` 才启用受限的本人原会话发送。
-- 发送前核对目标会话和输入框；只有本机新增出站气泡正文匹配时才标记为 `sent`。
-- 对发送超时、取消或本机回执不明记录 `send_unknown`，不自动重发。
-- 连续三次发送失败后暂停 60 秒；异步 HTTP 和 LLM 调用均带 timeout、一次重试与异常兜底。
-- 保留 FastAPI 回调、Redis Stream 和企微自建应用主动发送的兼容模块，但它们不是本地个人账号路径的启动前提。
+| 目录 | 内容 |
+| --- | --- |
+| [微信自动化回复](微信自动化回复/README.md) | 本次个人微信自动回复的运行项目、配置和启动说明；保留企业微信兼容入口 |
+| [实机验收记录](微信自动化回复/docs/native-wechat-validation.md) | 实际测试过程、发送结果、异常记录和未验证范围 |
+| `docs/research/` | 微信项目调研与本机接入核查记录 |
+| [wecom-agent](wecom-agent/README.md) | 原有企业微信项目说明 |
 
-## 环境要求
+## 联系人说明：Ri 是谁？
 
-- macOS，已登录企业微信桌面客户端，并已在目标 Ri 单聊中打开“查找聊天记录”。
-- Python 3.11 或更高版本。
-- 企业微信的辅助功能权限，用于受限读取和真实发送模式。
-- 可访问的 OpenAI Chat Completions 兼容模型服务。
+Ri 是本轮人工指定的测试联系人显示名，并被当前代码固定为唯一允许自动回复的联系人。程序不会自动发现、添加或回复所有联系人。
 
-## 安装
+`Ri` 不是微信官方用户 ID。当前通过指定的微信 2 客户端、唯一的 Ri 独立窗口和窗口标题校验定位会话；同名联系人不能据此认定为同一个人，多联系人及同名区分尚未验证。
 
-```bash
-git clone https://github.com/Ev1ldore/wecom-agent.git
-cd wecom-agent
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-cp .env.example .env
-```
+**仅修改 `.env` 中的联系人名称无法切换目标。** 换人需要同步改造代码中的目标限制、窗口识别和消息身份校验，并重新完成收件、去重、发送与回执验证。详细代码位置见[运行项目的联系人说明](微信自动化回复/README.md#联系人配置与身份边界)。
 
-在 `.env` 中填写 `LLM_BASE_URL`、`LLM_API_KEY` 和 `LLM_MODEL`。不要将真实密钥提交到 Git。
+## 启动与停止
 
-## 快速开始
+先阅读[运行项目 README](微信自动化回复/README.md)，配置本地 `.env` 并核对系统权限。在微信 2 中双击联系人 Ri，打开独立聊天窗口，保持前台且输入区为空。
 
-先在企业微信中打开 `Ri @微信` 单聊，打开“查找聊天记录”，清空搜索框并保持默认筛选。
+单轮 dry-run 预检，不发送消息，但会调整窗口并使用截图工具：
 
 ```bash
-source .venv/bin/activate
-python agent_loop.py --personal
+cd /Users/leecy/Desktop/wecom-ai-assistant/微信自动化回复
+DB_URL=sqlite:///./logs/wechat-native.db .venv/bin/python agent_loop.py --wechat-native --once
 ```
 
-默认启动 dry-run：程序会读取、过滤、生成并持久化草稿，但不发送企微消息。持续运行期间按 `Ctrl-C` 停止。
-
-用户明确授权真实发送后，再运行：
+明确启用真实自动回复：
 
 ```bash
-python -u agent_loop.py --personal --live
+DB_URL=sqlite:///./logs/wechat-native.db POLL_INTERVAL_SECONDS=5 \
+  .venv/bin/python -u agent_loop.py --wechat-native --live
 ```
 
-live 模式启动时会将当前可见历史记录为基线，只处理之后新增的消息；不会补发历史草稿。`sent` 仅表示本机出站气泡已确认，不代表对方已读或收到。
+在运行终端按 **Control+C** 停止。每次启动 live 都跳过当前可见历史，只处理之后新增的消息；不会补发旧草稿或未知发送。
 
-查看实时处理记录：
+## 验收边界
+
+- 已实机验证：Ri 新文字消息触发真实模型回复，并以本人账号在原会话提交；最终新增气泡通过修复后的只读核对确认，期间没有重发。
+- `sent` 仅表示本机确认匹配的本人气泡，不证明对方收到或已读；结果不明保留 `send_unknown`，不自动重试发送。
+- 当前仅验收微信 2 的 Ri 独立窗口前台文字场景。其他联系人、群聊、媒体消息、后台、最小化及其他客户端版本未验证。
+- 双击启动脚本的终端权限链尚未完成实机验收；本轮运行使用直接启动进程的方式。
+- 本轮未修改客户端文件、签名或 SIP；对照的三个客户端文件哈希未变化，全目录未逐文件校验。
+
+## 开发检查
+
+在 `微信自动化回复` 目录运行：
 
 ```bash
-.venv/bin/python -u watch_logs.py
+.venv/bin/python -m pytest -q
+.venv/bin/ruff check .
+.venv/bin/python smoke.py
 ```
 
-也可以在 Finder 中双击 `查看企微实时日志.command`。查看器只读 SQLite 和日志，不会启动、停止或发送消息。
+单元测试中的模型调用及冒烟发送使用模拟实现，不操作真实微信。离线检查与实机结果分别记录，具体证据见实机验收文档。
 
-## 配置
+## 自动回复流程图
 
-| 参数 | 说明 | 默认值 |
-| --- | --- | --- |
-| `DRY_RUN` | 是否只生成草稿。个人入口以 `--live` 显式开启发送 | `true` |
-| `INBOX_BACKEND` | 接收后端；个人桌面接入设为 `personal`，或使用 `--personal` | `cli` |
-| `PERSONAL_CONTACT_NAME` | 已验证的个人单聊显示名 | `Ri` |
-| `LLM_BASE_URL` | OpenAI Chat Completions 兼容 API 地址 | 无 |
-| `LLM_API_KEY` | 模型服务密钥，仅保存在本地 `.env` | 无 |
-| `LLM_MODEL` | 模型名称 | 无 |
-| `PERSONAL_LLM_TEMPLATE_NAME` | `prompts/` 中的个人回复模板文件名 | `personal_reply.txt` |
-| `DB_URL` | SQLite 处理记录数据库 | `sqlite:///./agent.db` |
-| `POLL_INTERVAL_SECONDS` | 轮询间隔（秒） | `2` |
-| `WECOM_CORPID` 等回调变量 | 仅兼容 FastAPI 回调与自建应用路径需要 | 无 |
-
-## 测试
-
-```bash
-source .venv/bin/activate
-pytest -v
-ruff check src tests adapters prompts agent_loop.py watch_logs.py smoke smoke.py
-ruff format --check src tests adapters prompts agent_loop.py watch_logs.py smoke smoke.py
-python smoke.py
-```
-
-`smoke.py` 默认只执行离线验证，不会向企微发送消息。
-
-## 流程
-
-flowchart LR
-    A[微信CLI数据获取方式] --> B[实时监听<br>官方iLink协议]
-    A --> C[手动查询<br>本地数据库]
-    
-    subgraph B [实时监听方案]
-        B1[getUpdates长轮询] --> B2[Webhook接收]
-        B1 --> B3[消息自动推送]
-        B2 --> B4[消息推送到指定API]
-    end
-
-    subgraph C [手动查询方案]
-        C1[命令行主动调用] --> C2[查询本地加密数据库]
-    end
-
-    B --> D[✅ 自动化场景友好]
-    C --> E[🔍 分析/查询场景友好]
-
-
-
-
-flowchart LR
-    subgraph A [用户交互层]
-        A1[微信用户]
-    end
-
-    subgraph B [企业微信平台]
-        B1[消息回调网关]
-    end
-
-    subgraph C [AI Agent核心处理层]
-        C1[消息接收与预处理]
-        C2[意图识别与分流]
-        C3[记忆管理]
-        C4[回复生成与治理]
-    end
-
-    subgraph D [能力与数据层]
-        D1[大模型API]
-        D2[知识库]
-        D3[业务系统API]
-        D4[工具库]
-    end
-
-    A -- 发送消息 --> B
-    B -- 推送消息 --> C1
-    C1 -- 清洗过滤 --> C2
-    C2 -- 简单查询/指令 --> D4
-    C2 -- 复杂咨询 --> C4
-    C3 -- 提供上下文 --> C4
-    D1 -- 生成回复 --> C4
-    D2 -- 检索信息 --> C4
-    D3 -- 获取数据 --> C4
-    C4 -- 治理与发送 --> B
-    B -- 回复消息 --> A
+[打开交互式流程图](微信自动化回复/docs/diagrams/ri-auto-reply.html)（支持缩放、明暗主题和导出）。源文件与 HTML 均保存在项目 `docs/diagrams/` 中。
