@@ -41,7 +41,7 @@ Ri 是人工指定并已完成本轮实机测试的联系人显示名。目前�
 cd /Users/leecy/Desktop/wecom-ai-assistant/微信自动化回复
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,assistant]"
 ```
 
 首次配置时复制 `.env.example` 为 `.env`，填写 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`，保持 `DRY_RUN=true`。密钥仅保存在本地，不提交到 Git。原生截图入口不要求填写 wx-cli 账号配置。
@@ -164,3 +164,26 @@ python smoke.py
 ## 自动回复流程图
 
 [打开交互式流程图](docs/diagrams/ri-auto-reply.html)（支持缩放、明暗主题和导出）。源文件与 HTML 均保存在项目 `docs/diagrams/` 中。
+
+## 用户管理：白名单、记忆和附件
+
+[完整操作说明](docs/assistant-user-management.md)包含初始化空白白名单、添加/移除会话、记忆有效期、附件提交与移除的可复制命令。新增 `assistant.user.example.json` 默认白名单为空；使用个人配置文件 `assistant.local.json`，不修改演示配置。
+
+- 白名单支持手动添加、删除、查看；离线 `watch` 会重新加载配置，移除的会话停止处理排队消息，重新添加后仍需显式恢复。
+- 记忆支持按会话查看、设置、删除及有效期；附件支持手动提交、查看解析资料与移除检索资料。
+- 这些管理入口属于离线助手，不自动绑定微信联系人，也不扩大原生 Ri 真实发送范围。管理数据库时需先停止同一数据库的 `watch`；白名单修改可在运行中执行。
+- 原生 `--wechat-native` 入口现在始终以本次 `--live` 参数决定发送模式；`.env` 的 `DRY_RUN=false` 不会单独开启真实发送。
+
+## 联系人勾选页面
+
+提供本地联系人管理界面，支持搜索、批量勾选、保存白名单、刷新回显以及会话记忆与附件资料管理。[启动与使用说明](docs/contact-ui.md)。地址为 `http://127.0.0.1:8765`，页面不会启动真实微信自动回复。
+
+## 启动和退出管理页面
+
+首次安装、日常启动和常见问题见[启动说明](docs/contact-ui.md#首次安装)。日常可双击 `启动联系人管理.command`，或执行：
+
+```bash
+.venv/bin/python -m src.core.assistant.web --config assistant.local.json --db logs/assistant.sqlite3
+```
+
+访问 `http://127.0.0.1:8765`。退出时点击页面右上角“退出程序”并确认，或在启动终端按 Control+C。按钮只关闭本地管理服务，保留已保存数据；关闭标签页不会停止服务。再次使用需重新启动。

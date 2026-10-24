@@ -95,3 +95,9 @@
 此命令会操作真实桌面，但只生成草稿，本轮未执行。新增增强处理拒绝 `--live` 和 `DRY_RUN=false`。原 `desktop_messages` 去重键、原始分钟时间、历史基线和尾部追加规则继续由原流程管理，助手记忆位于 `.assistant.db` 旁路数据库。模型使用 `assistant_reply.txt` 模板；其服务地址仍由原桌面配置决定，所以桌面入口不等同于完全离线模型入口。
 
 桌面增强当前只接文字，不自动下载微信语音或文件。多联系人白名单、附件、本地模型已在离线事件链验证；新增强处理链的真实微信收件、真实联系人身份与投递尚未实机验证。旧桌面流程的历史验收记录不作为新增功能的实机证明。
+
+## 手动配置与管理
+
+详见[用户操作说明](assistant-user-management.md)。首次使用可复制 `assistant.user.example.json` 到 `assistant.local.json`，默认空白名单，随后使用 `whitelist-add` 明确添加会话。原 `assistant.example.json` 继续用于演示与回归测试。
+
+`watch` 运行期间可使用 `whitelist-add`、`whitelist-remove`、`whitelist-list`；其余记忆和附件管理需要先停止占用同一数据库的监听。只对下一次成功加载生效，不撤回已经输出的模拟回复。配置错误或读取失败时停止离线监听；移除会话会取消排队消息并暂停会话，重新加入不恢复旧积压。

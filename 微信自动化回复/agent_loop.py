@@ -731,6 +731,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             settings = settings.model_copy(update={"dry_run": False})
         if args.wechat_native:
+            settings = settings.model_copy(update={"dry_run": not args.live})
             runtime: LocalRuntime = run_wechat_native
         elif wechat_ocr_selected and not (args.personal or args.wechat):
             runtime = run_wechat_ocr

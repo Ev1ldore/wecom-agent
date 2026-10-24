@@ -5,12 +5,17 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Protocol
 
+from fastapi.testclient import TestClient
+
 from adapters.inbox import Msg
+from src.core.assistant.contact_book import ContactBook
 from src.core.assistant.desktop import DesktopAssistant
 from src.core.assistant.engine import Engine
+from src.core.assistant.management import Management, WhitelistFile
 from src.core.assistant.media import Media
 from src.core.assistant.model import FixtureModel
-from src.core.assistant.store import Store
+from src.core.assistant.store import Store, encoded
+from src.core.assistant.web import create_app
 from src.core.desktop_loop import AgentLoop
 from src.core.desktop_store import SQLiteStore
 
@@ -62,6 +67,50 @@ async def run_assistant_smoke() -> None:
             engine.drain()
             assert "15:00" in state.rows("SELECT text FROM outbox")[0]["text"]
             assert engine.ingest(event) == "duplicate"
+            manager = Management(engine)
+            scope = encoded(["demo", "peer"])
+            manager.set_memory(scope, "风格", "简短", 3600)
+            assert manager.memories(scope)[0]["value"] == "简短"
+            assert manager.forget_memory(scope, "风格") == 1
+            document = manager.documents(scope)[0]
+            assert manager.forget_document(scope, document["id"]) == 1
+            assert manager.documents(scope) == []
+            config_path = root / "config.json"
+            config_path.write_text(json.dumps({"whitelist": []}))
+            config = WhitelistFile(config_path)
+            config.change("demo", "peer")
+            engine.update_whitelist(config.read())
+            engine.ingest({**event, "id": "pending", "kind": "text", "text": "你好"})
+            config.change("demo", "peer", remove=True)
+            engine.update_whitelist(config.read())
+            engine.drain()
+            assert (
+                state.rows("SELECT status FROM messages ORDER BY rowid DESC LIMIT 1")[
+                    0
+                ]["status"]
+                == "cancelled"
+            )
+            assert len(state.rows("SELECT * FROM receipts")) == 1
+            catalog = ContactBook(config_path)
+            catalog.add("本地冒烟联系人", "demo", "peer", catalog.state()["revision"])
+            with TestClient(
+                create_app(config_path, root / "ui.db"), base_url="http://127.0.0.1"
+            ) as client:
+                data = client.get("/api/state").json()
+                assert not data["contacts"][0]["selected"]
+                assert (
+                    client.post(
+                        "/api/selection",
+                        headers={"X-CSRF-Token": data["csrf_token"]},
+                        json={
+                            "revision": data["revision"],
+                            "ids": [data["contacts"][0]["id"]],
+                        },
+                    ).status_code
+                    == 200
+                )
+                assert client.get("/api/state").json()["contacts"][0]["selected"]
+                assert client.get("/").status_code == 200
         finally:
             state.close()
         store = SQLiteStore(root / "desktop.db")
@@ -85,4 +134,6 @@ async def run_assistant_smoke() -> None:
         finally:
             await processor.aclose()
             await store.aclose()
-    print("assistant smoke: PASS; memory + files + existing AgentLoop; real sends=0")
+    print(
+        "assistant smoke: PASS; memory CRUD + files + whitelist revocation + existing AgentLoop; real sends=0"
+    )

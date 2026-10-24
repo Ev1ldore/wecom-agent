@@ -8,6 +8,7 @@ from structlog.contextvars import bound_contextvars, get_contextvars
 
 from src.core.logging import get_logger
 
+from .management import whitelist
 from .media import retrieve
 from .model import validate
 from .store import encoded
@@ -16,6 +17,10 @@ logger = get_logger(__name__)
 
 
 class EngineProtocol(Protocol):
+    def update_whitelist(self, config: dict) -> None:
+        """Revoke queued work and invalidate drafts when an identity is removed."""
+        raise NotImplementedError
+
     def ingest(self, event: dict) -> str:
         """Authorize and persist a local event before processing."""
         raise NotImplementedError
@@ -47,8 +52,26 @@ class Engine:
     def __init__(self, store, config, model, media, sender=None):
         self.store, self.config, self.model, self.media = store, config, model, media
         self.sender = sender or OfflineSender(store)
-        self.allowed = {(x["conversation"], x["sender"]) for x in config["whitelist"]}
+        self.allowed = set(whitelist(config))
         self.store.recover()
+
+    def update_whitelist(self, config):
+        allowed = set(whitelist(config))
+        with self.store.lock:
+            removed = self.allowed - allowed
+            self.allowed = allowed
+            self.config["whitelist"] = config["whitelist"]
+            for conversation, sender in removed:
+                scope = encoded([conversation, sender])
+                self.store.pause(scope, "已从白名单移除；重新添加后需手动恢复")
+                self.store.execute(
+                    "UPDATE sessions SET revision=revision+1 WHERE scope=?", (scope,)
+                )
+                self.store.execute(
+                    "UPDATE messages SET status='cancelled',detail='白名单已移除' "
+                    "WHERE scope=? AND status='pending'",
+                    (scope,),
+                )
 
     @staticmethod
     def scope(event):
@@ -226,15 +249,26 @@ class Engine:
             row = pending[0]
             scope, key = row["scope"], row["id"]
             event = json.loads(row["payload"])
+            if (event["conversation"], event["sender"]) not in self.allowed:
+                self.store.execute(
+                    "UPDATE messages SET status='cancelled',detail='白名单已移除' WHERE id=?",
+                    (key,),
+                )
+                return True
             newer = self.store.rows(
-                "SELECT payload FROM messages WHERE scope=? AND status='pending' AND created>?",
+                "SELECT payload FROM messages WHERE scope=? AND status='pending' AND created>? ORDER BY created LIMIT 1",
                 (scope, row["created"]),
             )
             # Coalesce a burst of ordinary text, retaining every input in history.
             if (
                 event["kind"] == "text"
                 and not re.match(r"^(记住|忘记)[：:]", event.get("text", ""))
-                and any(json.loads(x["payload"])["kind"] == "text" for x in newer)
+                and newer
+                and json.loads(newer[0]["payload"])["kind"] == "text"
+                and not re.match(
+                    r"^(记住|忘记)[：:]",
+                    json.loads(newer[0]["payload"]).get("text", ""),
+                )
             ):
                 self.store.execute(
                     "UPDATE messages SET status='coalesced',detail='合并到后续文本回复' WHERE id=?",
@@ -260,7 +294,11 @@ class Engine:
                 current = self.store.rows(
                     "SELECT * FROM sessions WHERE scope=?", (scope,)
                 )[0]
-                if current["paused"] or current["revision"] != revision:
+                if (
+                    current["paused"]
+                    or current["revision"] != revision
+                    or (event["conversation"], event["sender"]) not in self.allowed
+                ):
                     self.store.execute(
                         "UPDATE messages SET status='stale',detail='新消息或人工接管使回复失效' WHERE id=?",
                         (key,),
@@ -367,11 +405,10 @@ class Engine:
             chunks, media_evidence = self.media.extract(
                 event["attachment"], event["kind"]
             )
-            if event["kind"] != "voice":
-                self.store.execute(
-                    "INSERT OR REPLACE INTO documents VALUES(?,?,?,?,?)",
-                    (key, scope, event["attachment"], encoded(chunks), media_evidence),
-                )
+            self.store.execute(
+                "INSERT OR REPLACE INTO documents VALUES(?,?,?,?,?)",
+                (key, scope, event["attachment"], encoded(chunks), media_evidence),
+            )
             evidence["media"] = media_evidence
             if event["kind"] == "voice":
                 text = "\n".join(x["text"] for x in chunks)

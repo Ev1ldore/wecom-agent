@@ -21,3 +21,6 @@ assistant.local.json
 *.lock
 models/
 scripts/assistant-vision-ocr
+
+# Private user-imported attachments. Synthetic examples remain tracked.
+/inbox/

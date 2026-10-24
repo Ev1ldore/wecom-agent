@@ -37,6 +37,7 @@ dev = [
 
 [project.scripts]
 wecom-agent-local = "agent_loop:main"
+wecom-agent-ui = "src.core.assistant.web:main"
 
 [tool.setuptools]
 py-modules = ["agent_loop"]
@@ -48,6 +49,7 @@ include = ["src", "src.*", "adapters", "adapters.*", "prompts", "smoke", "smoke.
 [tool.setuptools.package-data]
 prompts = ["*.txt"]
 adapters = ["*.applescript"]
+"src.core.assistant" = ["web_assets/*.html", "web_assets/*.css", "web_assets/*.js"]
 
 [tool.ruff]
 target-version = "py311"

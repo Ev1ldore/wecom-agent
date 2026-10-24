@@ -168,3 +168,17 @@ async def test_assistant_uses_native_loop_with_memory_and_no_send(
     await store.aclose()
     assert [r["status"] for r in records] == ["baseline", "dry_run", "dry_run"]
     assert records[-1]["time_display"] == "18:42"
+
+
+@pytest.mark.parametrize("configured_dry_run", [True, False])
+@pytest.mark.parametrize("explicit_live", [True, False])
+def test_native_live_requires_this_invocation_flag(
+    monkeypatch, configured_dry_run, explicit_live
+):
+    settings = DesktopSettings(_env_file=None, dry_run=configured_dry_run)
+    monkeypatch.setattr(agent_loop, "DesktopSettings", lambda: settings)
+    runtime = AsyncMock(return_value=0)
+    monkeypatch.setattr(agent_loop, "run_wechat_native", runtime)
+    args = ["--wechat-native", "--once"] + (["--live"] if explicit_live else [])
+    assert agent_loop.main(args) == 0
+    assert runtime.call_args.args[0].dry_run is not explicit_live
