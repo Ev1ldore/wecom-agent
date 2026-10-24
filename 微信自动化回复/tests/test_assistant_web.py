@@ -123,7 +123,11 @@ def test_stale_revision_returns_conflict(client):
 def test_memory_and_attachment_management_scoped(client, tmp_path):
     cid, headers = contact(client)
     route = f"/api/contacts/{cid}"
-    assert client.get(route + "/details").json() == {"memory": [], "documents": []}
+    assert client.get(route + "/details").json() == {
+        "memory": [],
+        "documents": [],
+        "short_term": {"recent": [], "older_excerpts": []},
+    }
     response = client.post(
         route + "/memory",
         headers=headers,
@@ -309,3 +313,36 @@ def test_real_owned_server_exits_and_preserves_saved_config(tmp_path):
                 server.wait(timeout=5)
             unrelated.terminate()
             unrelated.wait(timeout=5)
+
+
+def test_session_reset_requires_csrf_and_selection(client, tmp_path):
+    import time
+
+    from src.core.assistant.store import Store, encoded
+
+    cid, headers = contact(client)
+    db = Store(tmp_path / "state.db")
+    scope = encoded(["local-chat", "local-peer"])
+    db.execute(
+        "INSERT INTO history(scope,role,text,source,created) VALUES(?,?,?,?,?)",
+        (scope, "user", "hello", "source", time.time()),
+    )
+    db.close()
+    assert (
+        client.get(f"/api/contacts/{cid}/details").json()["short_term"]["recent"][0][
+            "text"
+        ]
+        == "hello"
+    )
+    route = f"/api/contacts/{cid}/session/reset"
+    assert client.post(route).status_code == 403
+    result = client.post(route, headers=headers)
+    assert result.status_code == 200
+    assert result.json()["short_term"]["recent"] == []
+    data = client.get("/api/state").json()
+    client.post(
+        "/api/selection",
+        headers=headers,
+        json={"revision": data["revision"], "ids": []},
+    )
+    assert client.post(route, headers=headers).status_code == 403

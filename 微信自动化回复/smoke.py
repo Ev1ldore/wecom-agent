@@ -1,6 +1,7 @@
 """Run the offline Phase smoke without credentials or external message sends."""
 
 import asyncio
+import importlib.util
 from collections.abc import Awaitable
 from typing import Protocol
 
@@ -33,6 +34,12 @@ def main() -> int:
         await run_wx2_smoke()
         await run_native_smoke()
         await run_assistant_smoke()
+        if importlib.util.find_spec("mcp") is not None:
+            from smoke.smoke_assistant import run_mcp_smoke
+
+            await run_mcp_smoke()
+        else:
+            print("MCP smoke: SKIP; optional dependency not installed (install .[mcp])")
 
     asyncio.run(run_all())
     return 0

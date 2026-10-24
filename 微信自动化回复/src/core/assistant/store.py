@@ -6,8 +6,19 @@ from typing import Protocol
 
 
 class MemoryStoreProtocol(Protocol):
-    def context(self, scope: str, window: int = 12) -> dict:
+    def context(
+        self,
+        scope: str,
+        window: int = 12,
+        *,
+        ttl_seconds: int = 1800,
+        max_chars: int = 12000,
+    ) -> dict:
         """Read isolated persistent memory and bounded history."""
+        raise NotImplementedError
+
+    def reset_context(self, scope: str) -> None:
+        """Exclude prior history without deleting audit or explicit memory."""
         raise NotImplementedError
 
     def execute(self, sql: str, args: tuple = ()):
@@ -30,8 +41,10 @@ class Store:
           paused INTEGER DEFAULT 0, reason TEXT DEFAULT '');
         CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY, scope TEXT, payload TEXT,
           status TEXT, detail TEXT DEFAULT '', created REAL);
+        CREATE TABLE IF NOT EXISTS context_resets(scope TEXT PRIMARY KEY, after_seq INTEGER);
         CREATE TABLE IF NOT EXISTS history(seq INTEGER PRIMARY KEY, scope TEXT, role TEXT,
           text TEXT, source TEXT, created REAL);
+        CREATE INDEX IF NOT EXISTS history_scope_seq ON history(scope,seq);
         CREATE TABLE IF NOT EXISTS memory(scope TEXT, key TEXT, value TEXT, source TEXT,
           expires REAL, PRIMARY KEY(scope,key));
         CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY, scope TEXT, name TEXT,
@@ -73,22 +86,68 @@ class Store:
                 "UPDATE messages SET status='pending' WHERE status='processing'"
             )
 
-    def context(self, scope, window=12):
-        history = self.rows(
-            "SELECT role,text,source FROM history WHERE scope=? ORDER BY seq", (scope,)
-        )
-        old, recent = history[:-window], history[-window:]
-        # Extractive summary preserves provenance, does not invent semantic facts.
-        summary = [
-            {"source": x["source"], "role": x["role"], "excerpt": x["text"][:240]}
-            for x in old[-20:]
-        ]
-        memory = self.rows(
-            "SELECT key,value,source FROM memory WHERE scope=? AND "
-            "(expires IS NULL OR expires>?)",
-            (scope, time.time()),
-        )
-        return {"recent": recent, "older_excerpts": summary, "memory": memory}
+    def reset_context(self, scope):
+        with self.lock, self.db:
+            boundary = self.db.execute(
+                "SELECT COALESCE(MAX(seq),0) FROM history WHERE scope=?", (scope,)
+            ).fetchone()[0]
+            self.db.execute(
+                "INSERT INTO context_resets VALUES(?,?) ON CONFLICT(scope) "
+                "DO UPDATE SET after_seq=excluded.after_seq",
+                (scope, boundary),
+            )
+            self.db.execute(
+                "UPDATE sessions SET revision=revision+1 WHERE scope=?", (scope,)
+            )
+
+    def context(self, scope, window=12, *, ttl_seconds=1800, max_chars=12000):
+        if any(type(v) is not int for v in (window, ttl_seconds, max_chars)) or not (
+            1 <= window <= 100
+            and 60 <= ttl_seconds <= 86400
+            and 1000 <= max_chars <= 64000
+        ):
+            raise ValueError("短期记忆参数超出范围")
+        with self.lock:
+            history = self.rows(
+                "SELECT role,text,source FROM history WHERE scope=? AND created>? "
+                "AND seq>COALESCE((SELECT after_seq FROM context_resets WHERE scope=?),0) "
+                "ORDER BY seq DESC LIMIT ?",
+                (scope, time.time() - ttl_seconds, scope, window + 20),
+            )
+            # Newest complete entries take priority; truncation is explicit.
+            recent, summary, remaining = [], [], max_chars
+            for index, item in enumerate(history):
+                if remaining <= 0:
+                    break
+                limit = min(remaining, 1000 if index < window else 240)
+                text = item["text"][:limit]
+                remaining -= len(text)
+                if index < window:
+                    recent.append(
+                        {
+                            **item,
+                            "text": text,
+                            "truncated": len(text) < len(item["text"]),
+                        }
+                    )
+                else:
+                    summary.append(
+                        {
+                            "source": item["source"],
+                            "role": item["role"],
+                            "excerpt": text,
+                        }
+                    )
+            memory = self.rows(
+                "SELECT key,value,source FROM memory WHERE scope=? AND "
+                "(expires IS NULL OR expires>?)",
+                (scope, time.time()),
+            )
+        return {
+            "recent": recent[::-1],
+            "older_excerpts": summary[::-1],
+            "memory": memory,
+        }
 
     def dump(self):
         return {

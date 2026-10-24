@@ -65,6 +65,8 @@ async def test_fresh_baseline_skips_old_and_only_processes_new_append(
     runs = []
 
     async def cycles(loop, **kw):
+        assert kw["interval"] == 60
+        assert kw["stop_on_error"] is True
         for _ in range(3):
             runs.append(await loop.run_once())
         return 0
@@ -182,3 +184,54 @@ def test_native_live_requires_this_invocation_flag(
     args = ["--wechat-native", "--once"] + (["--live"] if explicit_live else [])
     assert agent_loop.main(args) == 0
     assert runtime.call_args.args[0].dry_run is not explicit_live
+
+
+@pytest.mark.asyncio
+async def test_native_inbox_failure_stops_without_poll_retry():
+    from adapters.wechat_native import NativeError
+
+    loop = AsyncMock()
+    loop.run_once.side_effect = NativeError("TARGET_MISSING")
+    sleep = AsyncMock()
+    assert (
+        await agent_loop.run_cycles(
+            loop, once=False, interval=60, stop_on_error=True, sleep=sleep
+        )
+        == 1
+    )
+    loop.run_once.assert_awaited_once()
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["llm_failed", "send_failed", "emit_failed"])
+async def test_native_processing_failure_stops_without_another_cycle(failure):
+    loop = AsyncMock()
+    loop.run_once.return_value = {failure: 1}
+    sleep = AsyncMock()
+    assert (
+        await agent_loop.run_cycles(
+            loop, once=False, interval=60, stop_on_error=True, sleep=sleep
+        )
+        == 1
+    )
+    loop.run_once.assert_awaited_once()
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.parametrize("value", [1, 5, 10, 29, 601])
+def test_native_fast_poll_configuration_rejected(value):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        DesktopSettings(_env_file=None, wechat_native_poll_seconds=value)
+
+
+@pytest.mark.parametrize("value", [30, 60, 120, 600])
+def test_native_conservative_poll_configuration_accepted(value):
+    assert (
+        DesktopSettings(
+            _env_file=None, wechat_native_poll_seconds=value
+        ).wechat_native_poll_seconds
+        == value
+    )

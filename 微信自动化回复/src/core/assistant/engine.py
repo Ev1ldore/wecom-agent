@@ -422,7 +422,12 @@ class Engine:
                     "reply": "附件已在本地读取。你希望我做摘要、回答问题，还是检查指定内容？",
                     "citations": [],
                 }, evidence
-        context = self.store.context(scope, self.config.get("history_window", 12))
+        context = self.store.context(
+            scope,
+            self.config.get("history_window", 12),
+            ttl_seconds=self.config.get("short_term_ttl_seconds", 1800),
+            max_chars=self.config.get("short_term_max_chars", 12000),
+        )
         # Older original messages remain auditable, but explicit memory deletion must not
         # be undone by refeeding old preference commands to the model.
         context["recent"] = [

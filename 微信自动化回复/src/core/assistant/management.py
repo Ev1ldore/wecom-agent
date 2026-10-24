@@ -109,6 +109,14 @@ class ManagementProtocol(Protocol):
         """Remove one scoped explicit memory, preserving audit history."""
         raise NotImplementedError
 
+    def short_term(self, scope: str) -> dict:
+        """Inspect bounded, nonexpired context for one allowed conversation."""
+        raise NotImplementedError
+
+    def reset_short_term(self, scope: str) -> None:
+        """Start a new context without removing explicit memory or audit."""
+        raise NotImplementedError
+
     def documents(self, scope: str) -> list:
         """List parsed document metadata for one authorized scope."""
         raise NotImplementedError
@@ -173,6 +181,21 @@ class Management:
             ).rowcount
             self.invalidate(scope)
             return count
+
+    def short_term(self, scope):
+        self.authorize(scope)
+        config = getattr(self.engine, "config", {})
+        context = self.store.context(
+            scope,
+            config.get("history_window", 12),
+            ttl_seconds=config.get("short_term_ttl_seconds", 1800),
+            max_chars=config.get("short_term_max_chars", 12000),
+        )
+        return {key: context[key] for key in ("recent", "older_excerpts")}
+
+    def reset_short_term(self, scope):
+        self.authorize(scope)
+        self.store.reset_context(scope)
 
     def documents(self, scope):
         self.authorize(scope)

@@ -112,6 +112,7 @@ async def run_cycles(
     *,
     once: bool,
     interval: float,
+    stop_on_error: bool = False,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> int:
     """Keep polling on safe inbox failures, with bounded pacing and Ctrl-C exit."""
@@ -127,17 +128,16 @@ async def run_cycles(
                 code=code,
             )
             print("收消息失败：请检查所选接入及已验证的单聊窗口；未发送消息。")
-            if once:
+            if once or stop_on_error:
                 return 1
         else:
             logger.info("local_poll_done", msg_id=None, **stats)
-            if once:
-                return int(
-                    any(
-                        stats.get(field, 0)
-                        for field in ("llm_failed", "send_failed", "emit_failed")
-                    )
-                )
+            failed = any(
+                stats.get(field, 0)
+                for field in ("llm_failed", "send_failed", "emit_failed")
+            )
+            if once or (stop_on_error and failed):
+                return int(failed)
         await sleep(interval)
 
 
@@ -421,7 +421,7 @@ async def _run_wechat_native_locked(settings: DesktopSettings, *, once: bool) ->
         raise SetupError("内置截图路径只允许微信 2 的 Ri 独立单聊窗口。")
     if settings.assistant_enabled and not settings.dry_run:
         raise SetupError("增强处理链只支持 dry-run；尚未实机验收，未操作微信。")
-    chat = NativeRiChat(live=not settings.dry_run)
+    chat = NativeRiChat(live=not settings.dry_run, recover_history=False)
     await chat.activate()
     # Validate model credentials/template before opening the durable receive cursor.
     async with HTTPReplyModel(
@@ -467,7 +467,8 @@ async def _run_wechat_native_locked(settings: DesktopSettings, *, once: bool) ->
             )
             print(
                 f"wx2 Ri 内置截图自动回复已就绪：{mode}；基线 {len(history)} 条。"
-                "请保持 Ri 独立窗口在前台；切换应用或出现人工草稿会暂停发送。",
+                f"轮询间隔 {settings.wechat_native_poll_seconds:g} 秒；截图不重试。"
+                "请保持 Ri 独立窗口在前台；异常后停止本次运行，不自动重启。",
                 flush=True,
             )
             loop = AgentLoop(
@@ -484,7 +485,10 @@ async def _run_wechat_native_locked(settings: DesktopSettings, *, once: bool) ->
                 message_processor=assistant,
             )
             return await run_cycles(
-                loop, once=once, interval=settings.poll_interval_seconds
+                loop,
+                once=once,
+                interval=settings.wechat_native_poll_seconds,
+                stop_on_error=True,
             )
         finally:
             if assistant is not None:

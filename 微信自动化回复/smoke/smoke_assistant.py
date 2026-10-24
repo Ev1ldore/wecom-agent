@@ -71,6 +71,12 @@ async def run_assistant_smoke() -> None:
             scope = encoded(["demo", "peer"])
             manager.set_memory(scope, "风格", "简短", 3600)
             assert manager.memories(scope)[0]["value"] == "简短"
+            assert manager.short_term(scope)["recent"]
+            prior_history = state.rows("SELECT * FROM history")
+            manager.reset_short_term(scope)
+            assert manager.short_term(scope)["recent"] == []
+            assert state.rows("SELECT * FROM history") == prior_history
+            assert manager.memories(scope)[0]["value"] == "简短"
             assert manager.forget_memory(scope, "风格") == 1
             document = manager.documents(scope)[0]
             assert manager.forget_document(scope, document["id"]) == 1
@@ -135,5 +141,78 @@ async def run_assistant_smoke() -> None:
             await processor.aclose()
             await store.aclose()
     print(
-        "assistant smoke: PASS; memory CRUD + files + whitelist revocation + existing AgentLoop; real sends=0"
+        "assistant smoke: PASS; memory CRUD + short-term reset + files + whitelist revocation + existing AgentLoop; real sends=0"
+    )
+
+
+async def run_mcp_smoke():
+    """Use the official stdio client against temporary local management state."""
+    import sys
+    from datetime import timedelta
+
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    from src.core.assistant.contact_book import contact_id
+
+    with TemporaryDirectory() as temp:
+        root = Path(temp)
+        config = root / "config.json"
+        config.write_text(
+            json.dumps({"whitelist": [{"conversation": "demo", "sender": "peer"}]})
+        )
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=[
+                "-m",
+                "src.core.assistant.mcp_server",
+                "--config",
+                str(config),
+                "--db",
+                str(root / "state.db"),
+            ],
+        )
+        with (root / "stderr.log").open("w") as errors:
+            async with (
+                stdio_client(params, errlog=errors) as (read, write),
+                ClientSession(
+                    read, write, read_timeout_seconds=timedelta(seconds=15)
+                ) as client,
+            ):
+                result = await client.initialize()
+                assert result.protocolVersion == "2025-11-25"
+                tools = (await client.list_tools()).tools
+                assert len(tools) == 7
+                cid = contact_id("demo", "peer")
+                result = await client.call_tool(
+                    "memory_set", {"contact_id": cid, "key": "style", "value": "brief"}
+                )
+                assert not result.isError
+                result = await client.call_tool("memory_list", {"contact_id": cid})
+                assert result.structuredContent["data"]["memory"][0]["value"] == "brief"
+                result = await client.call_tool(
+                    "session_context_reset", {"contact_id": cid}
+                )
+                assert not result.isError and result.structuredContent["data"]["reset"]
+                config.write_text(
+                    json.dumps(
+                        {
+                            "contacts": [
+                                {
+                                    "name": "peer",
+                                    "conversation": "demo",
+                                    "sender": "peer",
+                                }
+                            ],
+                            "whitelist": [],
+                        }
+                    )
+                )
+                result = await client.call_tool("memory_list", {"contact_id": cid})
+                assert (
+                    result.isError
+                    and result.structuredContent["error"]["code"] == "NOT_ALLOWED"
+                )
+    print(
+        "MCP smoke: PASS; official stdio initialize + 7 tools + scoped memory + reset + revoke; real sends=0"
     )

@@ -1,10 +1,17 @@
 # macOS 微信自动回复
 
-新增白名单、长短期记忆、语音及文件处理已集成到现有项目。完全离线运行入口为 `agent_loop.py --offline-assistant`；[使用方式与验证边界](docs/offline-assistant.md)。
+项目提供 Ri 原会话自动回复、本地联系人管理页面，以及可启动的 MCP stdio 管理服务。
 
-当前个人微信入口为 `--wechat-native`：在微信 2 的 Ri 独立单聊中读取新文字消息，经模型生成回复，再以本人账号在原会话提交。默认 dry-run，显式添加 `--live` 才启用真实发送。
+| 入口 | 功能与边界 |
+| --- | --- |
+| `agent_loop.py --wechat-native` | 微信 2 的 Ri 独立单聊文字收发，默认 dry-run，显式 `--live` 才发送 |
+| `src.core.assistant.web` | 联系人勾选、记忆与附件管理；不启动真实自动回复 |
+| `src.core.assistant.mcp_server` | 7 个本地管理工具；不提供微信发送、窗口控制或任意文件读取 |
+| `agent_loop.py --offline-assistant` | 离线白名单、长短期记忆、语音和文件处理；[使用说明](docs/offline-assistant.md) |
 
-**运行状态：2026-10-21 本轮实机验收结束后，监听进程已按用户要求停止。** 下列命令仅在手动执行时启动程序。
+短期记忆默认保留 30 分钟内最近 12 条历史及有限摘录，总正文预算 12000 字符，支持页面、CLI 与 MCP 查看或重置。**增强记忆链尚未接入真实发送入口。** [短期记忆说明](docs/session-memory.md)。
+
+2026-10-21 已有 Ri 真实自动回复的历史验收记录；2026-10-24 的低频配置和输入区边界修复已通过离线验证，低频完整实发闭环仍未验收。最近一次启动未识别到 Ri 独立窗口，未发送消息；账号自动退出原因未确认。执行下列命令才会启动对应程序。
 
 ## 联系人配置与身份边界
 
@@ -41,10 +48,46 @@ Ri 是人工指定并已完成本轮实机测试的联系人显示名。目前�
 cd /Users/leecy/Desktop/wecom-ai-assistant/微信自动化回复
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev,assistant]"
+pip install -e '.[dev,assistant,mcp]'
 ```
 
 首次配置时复制 `.env.example` 为 `.env`，填写 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`，保持 `DRY_RUN=true`。密钥仅保存在本地，不提交到 Git。原生截图入口不要求填写 wx-cli 账号配置。
+
+## MCP 管理服务
+
+依赖为官方 `mcp==1.30.0`，作为可选依赖安装；协议与权限见 [MCP 规范](docs/mcp-spec.md)。未安装 MCP 时不影响原有微信入口与管理页面。
+
+```bash
+.venv/bin/python -m pip install -e '.[mcp]'
+.venv/bin/wecom-agent-mcp --config assistant.local.json --db logs/assistant.sqlite3
+```
+
+也可使用模块入口：
+
+```bash
+.venv/bin/python -m src.core.assistant.mcp_server --config assistant.local.json --db logs/assistant.sqlite3
+```
+
+使用与管理页面相同的配置、数据库。首次使用可复制 `assistant.user.example.json` 为 `assistant.local.json`；已有文件请保留。默认白名单为空，通过页面或 CLI 手动配置后生效。
+
+stdio 由 MCP 宿主拉起并通信，正常启动后等待 JSON-RPC 输入；stdout 只输出协议消息，日志在 stderr。宿主关闭 stdin 后退出，终端手动启动时可按 Control+C。不要把它当作 HTTP 后台服务。
+
+[客户端配置示例](examples/assistant/mcp-client.example.json)使用通用 `mcpServers` 结构，将示例根目录替换为实际绝对路径。尚未自动安装或配置到 Codex 等宿主；不同宿主的配置文件位置和格式以宿主说明为准。
+
+工具列表：`contacts_list`、`session_context_get`、`session_context_reset`、`memory_list`、`memory_set`、`memory_forget`、`documents_list`。先列联系人获取本地 ID，再访问已勾选联系人的数据。每次调用检查白名单；会话操作与同数据库离线监听互斥，超时或取消后不自动重试写入。
+
+## 查看和重置短期记忆
+
+在页面“记忆”中选择已勾选联系人，可查看近期上下文并点击“重置短期记忆”。CLI 示例：
+
+```bash
+.venv/bin/python agent_loop.py --offline-assistant session-show --config assistant.local.json --db logs/assistant.sqlite3 --conversation demo-alice --sender alice
+.venv/bin/python agent_loop.py --offline-assistant session-reset --config assistant.local.json --db logs/assistant.sqlite3 --conversation demo-alice --sender alice
+```
+
+示例身份需替换为本地配置中的实际身份。`history_window` 默认 12，`short_term_ttl_seconds` 默认 1800，`short_term_max_chars` 默认 12000；完整配置范围见[短期记忆说明](docs/session-memory.md)。重置不删除审计、长期记忆、附件或发送去重记录。过期和重置前的历史不再进入短期上下文。
+
+这些功能用于离线和桌面 `--assistant` dry-run 增强路径。桌面增强入口使用自己的 `.assistant.db`，不会自动复用网页与 MCP 指定的数据库。
 
 ## 微信 2 内置截图自动回复（Ri）
 
@@ -56,7 +99,7 @@ DB_URL=sqlite:///./logs/wechat-native.db .venv/bin/python agent_loop.py --wechat
 DB_URL=sqlite:///./logs/wechat-native.db .venv/bin/python agent_loop.py --wechat-native --live
 ```
 
-第一条为不发送的单轮预检；第二条启用本人原会话自动回复。也可双击 `启动微信自动回复.command`，启动真实自动回复，轮次之间等待 5 秒。在启动终端按 Control+C 停止；跨进程锁阻止两个 wx2 桌面执行器同时运行。
+第一条为不发送的单轮预检；第二条启用本人原会话自动回复。也可双击 `启动微信自动回复.command`，启动真实自动回复，轮次之间默认等待 60 秒。在启动终端按 Control+C 停止；跨进程锁阻止两个 wx2 桌面执行器同时运行。
 
 启动时将 Ri 独立窗口设为 598×640 并居中，读取当前可见消息作为基线，不补发旧消息或旧草稿。后续只处理严格尾部追加的对方文字，忽略本人消息；保留原始显示时间，不补造年份和秒数。所有入站 claim、回复和结果持久化到指定 SQLite，重复消息和未知发送不会重发。
 
@@ -64,7 +107,7 @@ DB_URL=sqlite:///./logs/wechat-native.db .venv/bin/python agent_loop.py --wechat
 
 采用原生 Unicode 按键输入，不读写系统剪贴板。发送依次校验精确进程/窗口、Ri 标题、空白输入区、完整草稿、历史未变和唯一发送按钮，再点击发送一次。只有新增本人绿色气泡与草稿匹配且输入区清空，才记录 `sent`（仅表示本机提交确认）。文字写入开始后的超时、取消和不确定结果记录 `send_unknown`，不自动重发。
 
-支持范围为已验证布局中的可辨认文字。图片、语音、视频、表情、群聊、后台/最小化和其他联系人不在本次验收范围；OCR 歧义与缺少时间分隔时停止该轮。可见历史因正常滚动不完整时，程序最多向上滚动 10 次，重新核对完整已保存前缀与唯一重叠，再返回底部；无法恢复完整前缀时暂停，不把残缺视口直接当作新历史。
+支持范围为已验证布局中的可辨认文字。图片、语音、视频、表情、群聊、后台/最小化和其他联系人不在本次验收范围；OCR 歧义与缺少时间分隔时停止该轮。可见历史因正常滚动不完整时，当前运行入口不自动滚动补扫历史；无法确认完整前缀时停止本次运行，不把残缺视口直接当作新历史。
 
 2026-10-21 已实机确认：Ri 独立窗口可打开、正文可采集，识别出 2 条对方及 3 条本人消息；固定测试文字已在本机提交并确认新增气泡。19:39 的新消息“你是谁”触发真实模型回复并在原会话提交；首次回执因头像和截断行 OCR 误判而记录未知，修复后只读核对确认完整 5 条前缀、新增 1 条匹配本人气泡和空白输入区，更新为 `sent`，没有重发。完整事实、旧未知记录及未验证范围见 `docs/native-wechat-validation.md`。
 
@@ -142,7 +185,8 @@ flowchart LR
 | `LLM_MODEL` | 模型名称 | 无 |
 | `PERSONAL_LLM_TEMPLATE_NAME` | `prompts/` 中的个人回复模板文件名 | `personal_reply.txt` |
 | `DB_URL` | SQLite 处理记录数据库 | `sqlite:///./agent.db` |
-| `POLL_INTERVAL_SECONDS` | 轮询间隔（秒） | `2` |
+| `POLL_INTERVAL_SECONDS` | 兼容入口轮询间隔（秒），不控制原生截图入口 | `2` |
+| `WECHAT_NATIVE_POLL_SECONDS` | 原生微信轮询间隔，允许 30–600 秒 | `60` |
 | `WECHAT_ILINK_ALLOWED_USER` 等 iLink 变量 | 仅官方 iLink Bot API 路径（`--wechat`）需要 | 见 `.env.example` |
 | `WECHAT_OCR_CONTACT` | 旧 OCR 路径的联系人配置；原生入口只接受空值或 `Ri`，不支持任意联系人 | 无 |
 | `WECHAT_OCR_TEMPLATE_NAME` | `prompts/` 中的 OCR 回复模板文件名 | `wechat_ocr_reply.txt` |
@@ -187,3 +231,17 @@ python smoke.py
 ```
 
 访问 `http://127.0.0.1:8765`。退出时点击页面右上角“退出程序”并确认，或在启动终端按 Control+C。按钮只关闭本地管理服务，保留已保存数据；关闭标签页不会停止服务。再次使用需重新启动。
+
+## 原生微信低频运行
+
+本机 `.env` 已设置 `WECHAT_NATIVE_POLL_SECONDS=60`。原生入口每轮结束后等待 60 秒，不再使用兼容入口的 `POLL_INTERVAL_SECONDS`。可在 `.env` 改为 30 至 600 秒，修改后下次启动生效；实际新消息响应还包括截图、OCR、模型与校验耗时。
+
+截图读取不自动重试；历史前缀不完整时不自动滚动补扫；收件、模型、草稿或发送校验失败后停止本次运行。不会自动重启监听或补发旧消息。发送前后的身份、输入框与新增气泡校验仍执行。
+
+本次只做离线回归验证，不再次触发真实消息测试。降低频率是否能避免客户端自动退出尚未验证，不将其描述为已修复账号退出原因。
+
+## 本次交付检查
+
+pytest：收集 1017 / 通过 1017；ruff：通过。`smoke.py` 通过，包含官方 MCP 客户端初始化、7 个工具发现、记忆读写、短期重置与撤权验证，真实发送数为 0。存在两条既有依赖弃用告警。
+
+MCP 宿主界面连接、新增记忆控件的浏览器点击及低频真实发送完整闭环尚未验收。历史实机结果不代表本次修改已完成实发验证。

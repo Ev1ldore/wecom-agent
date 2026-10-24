@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "wechat-assistant-management": {
+      "command": "/absolute/path/wecom-ai-assistant/微信自动化回复/.venv/bin/wecom-agent-mcp",
+      "args": [
+        "--config", "/absolute/path/wecom-ai-assistant/微信自动化回复/assistant.local.json",
+        "--db", "/absolute/path/wecom-ai-assistant/微信自动化回复/logs/assistant.sqlite3"
+      ]
+    }
+  }
+}

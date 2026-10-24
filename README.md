@@ -1,10 +1,16 @@
 # 微信与企业微信自动回复
 
-新增白名单、长短期记忆、语音及文件处理已集成到现有项目。完全离线运行入口为 `agent_loop.py --offline-assistant`；[使用方式与验证边界](微信自动化回复/docs/offline-assistant.md)。
+项目包含三个入口：macOS 微信 2 的 Ri 原会话自动回复、本地联系人与记忆管理页面、供 MCP 客户端调用的 stdio 管理服务。
 
-当前已在 macOS 的 **微信 2 4.1.15 → Ri 独立单聊**跑通新消息读取、真实模型生成和本人原会话提交。接入通过客户端内置截图与原生键鼠操作完成，无需 wx-cli、客户端私有数据库或密钥文件。
+| 能力 | 当前范围 |
+| --- | --- |
+| 微信真实自动回复 | 固定 Ri 独立单聊、前台文字消息；默认 dry-run，显式 `--live` 才发送 |
+| 联系人管理页面 | 手动录入、勾选并保存离线白名单；不自动读取微信通讯录或启动真实回复 |
+| 会话短期记忆 | 默认 30 分钟、最近 12 条历史、正文总预算 12000 字符，支持按会话重置 |
+| MCP 管理服务 | 7 个工具，管理联系人元数据、会话上下文、显式长期记忆和附件元数据 |
+| 附件及增强回复 | 已集成离线助手和桌面 dry-run；真实发送入口尚未接入增强记忆链 |
 
-2026-10-21 本轮验收结束后，自动回复进程已按用户要求停止；编辑或阅读本文不会启动监听。
+2026-10-21 已在微信 2 4.1.15 的 Ri 单聊跑通新消息读取、真实模型生成和本人原会话提交。2026-10-24 增加低频配置与 OCR 输入区边界修复；这一版低频完整实发闭环仍未验收，客户端自动退出原因尚未确认。详见[实机记录](微信自动化回复/docs/native-wechat-validation.md)。
 
 ## 项目入口
 
@@ -14,6 +20,24 @@
 | [实机验收记录](微信自动化回复/docs/native-wechat-validation.md) | 实际测试过程、发送结果、异常记录和未验证范围 |
 | `docs/research/` | 微信项目调研与本机接入核查记录 |
 | [wecom-agent](wecom-agent/README.md) | 原有企业微信项目说明 |
+
+## MCP 与会话记忆快速开始
+
+在运行项目目录安装可选依赖，并启动管理服务：
+
+```bash
+cd 微信自动化回复
+.venv/bin/python -m pip install -e '.[mcp]'
+.venv/bin/wecom-agent-mcp --config assistant.local.json --db logs/assistant.sqlite3
+```
+
+复用管理页面的本地配置和数据库；首次配置见[运行项目 README](微信自动化回复/README.md#mcp-管理服务)。stdio 服务等待 MCP 宿主输入，不提供网页地址，也不发送微信消息。
+
+- [MCP 启动、工具契约与权限](微信自动化回复/docs/mcp-spec.md)
+- [通用客户端配置示例](微信自动化回复/examples/assistant/mcp-client.example.json)
+- [短期记忆参数、查看和重置](微信自动化回复/docs/session-memory.md)
+
+MCP 服务已通过官方客户端 stdio 联调，尚未配置到 Codex 等宿主。短期记忆按 `(conversation, sender)` 隔离，过期和重置后不再进入上下文，保留审计、长期记忆和发送去重记录。
 
 ## 联系人说明：Ri 是谁？
 
@@ -37,7 +61,7 @@ DB_URL=sqlite:///./logs/wechat-native.db .venv/bin/python agent_loop.py --wechat
 明确启用真实自动回复：
 
 ```bash
-DB_URL=sqlite:///./logs/wechat-native.db POLL_INTERVAL_SECONDS=5 \
+DB_URL=sqlite:///./logs/wechat-native.db WECHAT_NATIVE_POLL_SECONDS=60 \
   .venv/bin/python -u agent_loop.py --wechat-native --live
 ```
 
@@ -76,3 +100,7 @@ DB_URL=sqlite:///./logs/wechat-native.db POLL_INTERVAL_SECONDS=5 \
 提供本地联系人管理界面，支持搜索、批量勾选、保存白名单、刷新回显以及会话记忆与附件资料管理。[启动与使用说明](微信自动化回复/docs/contact-ui.md)。地址为 `http://127.0.0.1:8765`，页面不会启动真实微信自动回复。
 
 管理页面支持右上角“退出程序”，正常关闭本地管理服务并保留已保存数据。[首次安装、启动与退出说明](微信自动化回复/docs/contact-ui.md#首次安装)。
+
+原生微信入口默认每轮等待 60 秒（`WECHAT_NATIVE_POLL_SECONDS`，允许 30–600 秒），截图不立即重试，异常后停止且不自动重启。降低频率对客户端自动退出的改善尚未实机验证。
+
+本次全量离线检查：pytest 收集 1017 / 通过 1017；ruff 通过；smoke.py 通过，包含官方 MCP stdio 客户端联调，真实发送数为 0。

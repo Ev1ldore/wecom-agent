@@ -38,6 +38,7 @@ class DesktopSettingsProtocol(Protocol):
     wechat_llm_template_name: str
     db_url: str
     poll_interval_seconds: float
+    wechat_native_poll_seconds: float
     dedup_bucket_seconds: int
     assistant_enabled: bool
     assistant_template_name: str
@@ -75,6 +76,7 @@ class DesktopSettings(BaseSettings):
     wechat_llm_template_name: str = "wechat_reply.txt"
     db_url: str = "sqlite:///./agent.db"
     poll_interval_seconds: float = Field(default=2.0, ge=0.1, le=60)
+    wechat_native_poll_seconds: float = Field(default=60.0, ge=30, le=600)
     dedup_bucket_seconds: int = Field(default=5, ge=1, le=300)
     assistant_enabled: bool = False
     assistant_template_name: str = "assistant_reply.txt"

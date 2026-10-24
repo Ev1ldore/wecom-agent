@@ -15,6 +15,8 @@
   ],
   "inbox": "examples/assistant/inbox",
   "history_window": 12,
+  "short_term_ttl_seconds": 1800,
+  "short_term_max_chars": 12000,
   "poll_seconds": 0.2,
   "max_replies_per_minute": 10,
   "local_model": "qcwind/qwen3-8b-instruct-Q4-K-M:latest",

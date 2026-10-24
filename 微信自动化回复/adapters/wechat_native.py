@@ -130,6 +130,7 @@ class NativeFrame:
     messages: tuple[OCRChatMessage, ...]
     composer: str
     send_button: bool
+    composer_top: float = 0.78
 
 
 def mark_green_bubbles(
@@ -154,16 +155,29 @@ def mark_green_bubbles(
     return result
 
 
-def parse_native_frame(window: WeChatWindow, rows: list[OCRObservation]) -> NativeFrame:
+def parse_native_frame(
+    window: WeChatWindow,
+    rows: list[OCRObservation],
+    *,
+    composer_top: float | None = None,
+) -> NativeFrame:
     """Parse only the tested Ri popout layout, retaining original visible labels."""
     if not rows or len(rows) > 2000:
         raise NativeError("AMBIGUOUS_LAYOUT")
 
+    top = 0.78 if composer_top is None else composer_top
+    if not 0.70 <= top <= 0.82:
+        raise NativeError("LAYOUT_UNSUPPORTED")
+
     def avatar(o: OCRObservation) -> bool:
-        return 0.125 <= o.y < 0.78 and (o.x >= 0.89 or o.x + o.w <= 0.10)
+        return 0.125 <= o.y < top and (o.x >= 0.89 or o.x + o.w <= 0.10)
 
     def clipped(o: OCRObservation) -> bool:
-        return 0.125 <= o.y < 0.78 and o.h < 0.020 and (o.y < 0.145 or o.y + o.h > 0.75)
+        return (
+            0.125 <= o.y < top
+            and o.h < 0.020
+            and (o.y < 0.145 or o.y + o.h > top - 0.03)
+        )
 
     for o in rows:
         if (
@@ -182,10 +196,23 @@ def parse_native_frame(window: WeChatWindow, rows: list[OCRObservation]) -> Nati
     titles = [o for o in rows if 0.045 <= o.y < 0.11 and o.x < 0.4]
     if len(titles) != 1 or titles[0].text.strip() != "Ri":
         raise NativeError("TITLE_MISMATCH")
+    hints = [
+        o
+        for o in rows
+        if normalize_text(o.text) == "按住鼠标语音输入文字"
+        and o.x < 0.08
+        and 0.72 <= o.y < 0.89
+    ]
+    if len(hints) > 1:
+        raise NativeError("AMBIGUOUS_LAYOUT")
+    if hints:
+        # The actual empty composer hint anchors a taller editor. Carry this
+        # verified boundary forward when the hint disappears after typing.
+        top = min(0.78, hints[0].y - 0.015)
     composer = "\n".join(
         o.text
         for o in sorted(rows, key=lambda o: (o.y, o.x))
-        if 0.78 <= o.y < 0.925 and normalize_text(o.text) != "按住鼠标语音输入文字"
+        if top <= o.y < 0.925 and normalize_text(o.text) != "按住鼠标语音输入文字"
     )
     buttons = [
         o for o in rows if o.text.strip() == "发送" and o.x > 0.85 and o.y > 0.925
@@ -199,7 +226,7 @@ def parse_native_frame(window: WeChatWindow, rows: list[OCRObservation]) -> Nati
         (
             o
             for o in rows
-            if 0.125 <= o.y and o.y + o.h <= 0.78 and not avatar(o) and not clipped(o)
+            if 0.125 <= o.y and o.y + o.h <= top and not avatar(o) and not clipped(o)
         ),
         key=lambda o: (o.y, o.x),
     )
@@ -254,7 +281,7 @@ def parse_native_frame(window: WeChatWindow, rows: list[OCRObservation]) -> Nati
         ignored_avatar_observations=sum(avatar(o) for o in rows),
         clipped_lines=sum(clipped(o) for o in rows),
     )
-    return NativeFrame(window, messages, composer, len(buttons) == 1)
+    return NativeFrame(window, messages, composer, len(buttons) == 1, top)
 
 
 class NativeChatProtocol(Protocol):
@@ -293,15 +320,18 @@ class NativeRiChat:
         backend: NativeBackend | None = None,
         *,
         live: bool = False,
+        recover_history: bool = True,
         recognizer=ocr_png,
         color_marker=mark_green_bubbles,
     ) -> None:
         self.backend = backend or SubprocessNativeBackend()
         self.live = live
+        self.recover_history = recover_history
         self.recognizer = recognizer
         self.color_marker = color_marker
         self.window: WeChatWindow | None = None
         self.lock = asyncio.Lock()
+        self._composer_top: float | None = None
         self._history: tuple[OCRChatMessage, ...] | None = None
         self._view: tuple[OCRChatMessage, ...] | None = None
 
@@ -311,37 +341,28 @@ class NativeRiChat:
             self.window = WeChatWindow(**result["window"])
 
     async def _read_frame(self) -> NativeFrame:
-        for attempt in range(2):
-            try:
-                result = await self.backend.request("capture", window=self.window)
-                window = WeChatWindow(**result["window"])
-                if self.window is not None and self.window != window:
-                    raise NativeError("WINDOW_CHANGED")
-                png = base64.b64decode(result["png"], validate=True)
-                async with asyncio.timeout(15):
-                    rows = await asyncio.to_thread(self.recognizer, png)
-                    rows = await asyncio.to_thread(self.color_marker, png, rows)
-                frame = parse_native_frame(window, rows)
-                self.window = window
-                return frame
-            except NativeError as exc:
-                if (
-                    exc.code not in {"CAPTURE_FAILED", "TIMEOUT", "NATIVE_FAILED"}
-                    or attempt
-                ):
-                    logger.warning(
-                        "wechat_native_read_blocked",
-                        msg_id=get_contextvars().get("msg_id"),
-                        code=exc.code,
-                    )
-                    raise
-            except Exception:  # noqa: BLE001 - OCR diagnostics may contain private text.
-                if attempt:
-                    raise NativeError("CAPTURE_FAILED") from None
+        try:
+            result = await self.backend.request("capture", window=self.window)
+            window = WeChatWindow(**result["window"])
+            if self.window is not None and self.window != window:
+                raise NativeError("WINDOW_CHANGED")
+            png = base64.b64decode(result["png"], validate=True)
+            async with asyncio.timeout(15):
+                rows = await asyncio.to_thread(self.recognizer, png)
+                rows = await asyncio.to_thread(self.color_marker, png, rows)
+            frame = parse_native_frame(window, rows, composer_top=self._composer_top)
+            self._composer_top = frame.composer_top
+            self.window = window
+            return frame
+        except NativeError as exc:
             logger.warning(
-                "wechat_native_capture_retry", msg_id=get_contextvars().get("msg_id")
+                "wechat_native_read_blocked",
+                msg_id=get_contextvars().get("msg_id"),
+                code=exc.code,
             )
-        raise NativeError("CAPTURE_FAILED")
+            raise
+        except Exception:  # noqa: BLE001 -- No private OCR diagnostics or capture retry.
+            raise NativeError("CAPTURE_FAILED") from None
 
     async def _snapshot(self) -> NativeFrame:
         frame = await self._read_frame()
@@ -354,6 +375,8 @@ class NativeRiChat:
         if frame.messages[: len(old)] == old:
             self._history, self._view = frame.messages, frame.messages
             return frame
+        if not self.recover_history:
+            raise NativeError("HISTORY_INCOMPLETE")
         # A truncated viewport is never accepted as a new history. Read upwards
         # until the complete saved prefix is actually observed across overlapping
         # pages, then return to the bottom and require a unique matching anchor.

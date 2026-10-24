@@ -59,6 +59,7 @@ class MemoryInput(BaseModel):
 class _Context:
     store: Store
     allowed: set
+    config: dict
 
 
 @contextmanager
@@ -80,7 +81,10 @@ def contact_manager(book, database, cid):
             ) from None
         store = Store(database)
         try:
-            yield Management(_Context(store, set(whitelist(config)))), encoded(pair)
+            yield (
+                Management(_Context(store, set(whitelist(config)), config)),
+                encoded(pair),
+            )
         finally:
             store.close()
 
@@ -177,8 +181,15 @@ def create_app(
         with contact_manager(book, database, cid) as (manager, scope):
             return {
                 "memory": manager.memories(scope),
+                "short_term": manager.short_term(scope),
                 "documents": manager.documents(scope),
             }
+
+    @app.post("/api/contacts/{cid}/session/reset")
+    def reset_session(cid: str):
+        with contact_manager(book, database, cid) as (manager, scope):
+            manager.reset_short_term(scope)
+            return {"reset": True, "short_term": manager.short_term(scope)}
 
     @app.post("/api/contacts/{cid}/memory")
     def memory(cid: str, payload: MemoryInput):

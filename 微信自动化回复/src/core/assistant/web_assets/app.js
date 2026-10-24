@@ -49,10 +49,16 @@ async function loadDetails() {
   $('memory-contact').value = contact ? current : ''; $('attachment-contact').value = contact ? current : '';
   $('memory-form').querySelectorAll('input,textarea,select,button').forEach(n => n.disabled = !contact);
   $('memory-list').textContent = $('document-list').textContent = contact ? '正在读取本地资料…' : '请先在联系人页勾选、保存，再选择联系人。';
+  $('session-list').textContent = contact ? '正在读取…' : '选择联系人后查看。';
+  $('session-reset').disabled = !contact;
   if (!contact) return;
   try {
     const data = await api(`/api/contacts/${current}/details`); if (epoch !== detailEpoch) return;
     const cid = current;
+    $('session-list').replaceChildren();
+    const recent = data.short_term?.recent || [];
+    if (!recent.length) $('session-list').textContent = '当前没有有效短期记忆。';
+    recent.forEach(m => { const row = node('div', 'data-item'); row.append(node('strong', '', m.role === 'assistant' ? '助手' : '联系人'), node('p', '', m.text)); $('session-list').append(row); });
     $('memory-list').replaceChildren(); $('document-list').replaceChildren();
     if (!data.memory.length) $('memory-list').textContent = '还没有有效记忆。可以在左侧添加，或通过入站消息明确记住。';
     data.memory.forEach(m => {
@@ -109,4 +115,10 @@ $('quit-confirm').addEventListener('click', async () => {
     $('quit-confirm').disabled = false;
     $('quit-cancel').disabled = false;
   }
+});
+
+$('session-reset').addEventListener('click', () => {
+  if (!current || !confirm('重置此联系人的短期记忆？长期记忆和审计记录会保留。')) return;
+  const cid = current;
+  run(async () => { await api(`/api/contacts/${cid}/session/reset`, {method: 'POST'}); await loadDetails(); notify('已重置短期记忆。'); });
 });

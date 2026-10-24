@@ -39,6 +39,8 @@ def main(argv=None):
             "whitelist-list",
             "whitelist-add",
             "whitelist-remove",
+            "session-show",
+            "session-reset",
             "memory-list",
             "memory-set",
             "memory-forget",
@@ -118,13 +120,22 @@ def main(argv=None):
         )
         errors = []
         try:
-            if args.command.startswith(("memory-", "attachment-")):
+            if args.command.startswith(("memory-", "attachment-", "session-")):
                 if not args.conversation or not args.sender:
                     parser.error("需要 --conversation 和 --sender")
                 scope = encoded([args.conversation, args.sender])
                 manager = Management(engine)
                 manager.authorize(scope)
-                if args.command == "memory-list":
+                if args.command == "session-show":
+                    print(encoded({"short_term": manager.short_term(scope)}))
+                elif args.command == "session-reset":
+                    manager.reset_short_term(scope)
+                    print(
+                        encoded(
+                            {"short_term": manager.short_term(scope), "reset": True}
+                        )
+                    )
+                elif args.command == "memory-list":
                     print(encoded({"memory": manager.memories(scope)}))
                 elif args.command == "memory-set":
                     manager.set_memory(scope, args.key, args.value, args.ttl_seconds)
@@ -191,7 +202,7 @@ def main(argv=None):
                     print(engine.resume(scope))
                 else:
                     # Clear content, retain message tombstones and delivery audit for dedupe.
-                    for table in ("history", "memory", "documents"):
+                    for table in ("history", "memory", "documents", "context_resets"):
                         store.execute(f"DELETE FROM {table} WHERE scope=?", (scope,))
                     store.execute(
                         "UPDATE messages SET payload='{}',status='cleared' WHERE scope=?",

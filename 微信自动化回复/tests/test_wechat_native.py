@@ -286,10 +286,11 @@ async def test_changed_history_after_type_never_submits():
 
 
 @pytest.mark.asyncio
-async def test_read_retries_transient_capture_once():
+async def test_capture_failure_is_not_retried():
     s, b = chat([NativeError("CAPTURE_FAILED"), b"ok"], {b"ok": rows()})
-    assert (await s.snapshot()).messages
-    assert len(b.ops) == 2
+    with pytest.raises(NativeError, match="CAPTURE_FAILED"):
+        await s.snapshot()
+    assert len(b.ops) == 1
 
 
 @pytest.mark.asyncio
@@ -369,3 +370,43 @@ async def test_backend_cancellation_allows_owned_ui_cleanup_before_hard_kill(
     process.terminate.assert_called_once()
     assert process.communicate.await_count == 2
     hard_kill.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_runtime_no_history_recovery_avoids_scroll_and_capture_burst():
+    s, backend = chat(
+        [b"before", b"after"], {b"before": rows(), b"after": rows(extra=True)}
+    )
+    s.recover_history = False
+    await s.snapshot()
+    s._history = (*s._history, OCRChatMessage("missing old message", False, "18:36"))
+    with pytest.raises(NativeError, match="HISTORY_INCOMPLETE"):
+        await s.snapshot()
+    assert [op for op, _ in backend.ops] == ["capture", "capture"]
+
+
+def test_tall_composer_hint_does_not_become_peer_or_ambiguous_layout():
+    observations = [
+        *rows(),
+        O("13:18", 0.47, 0.5867, 0.06, 0.023),
+        O("低频验收1024，请只回复你好", 0.135, 0.6594, 0.32, 0.026),
+        O("按住鼠标语音输入文字", 0.032, 0.7422, 0.25, 0.026),
+    ]
+    frame = parse_native_frame(WINDOW, observations)
+    assert frame.composer == ""
+    assert frame.messages[-1].text == "低频验收1024，请只回复你好"
+    assert frame.messages[-1].time_display == "13:18"
+    assert not frame.messages[-1].is_self
+
+
+@pytest.mark.asyncio
+async def test_verified_tall_composer_boundary_is_reused_after_typing():
+    before = [*rows(), O("按住鼠标语音输入文字", 0.032, 0.7422, 0.25, 0.026)]
+    typed = [*rows(), O(DRAFT, 0.032, 0.7422, 0.25, 0.026)]
+    session, backend = chat([b"before", b"typed"], {b"before": before, b"typed": typed})
+    initial = await session.snapshot()
+    result = await session.snapshot()
+    assert initial.composer == ""
+    assert result.composer == DRAFT
+    assert result.messages == initial.messages
+    assert [op for op, _ in backend.ops] == ["capture", "capture"]

@@ -135,3 +135,7 @@ assistant watch --input examples/assistant/messages.jsonl
 ## 6. 使用图形界面
 
 不想通过命令逐项添加白名单时，可使用[联系人勾选页面](contact-ui.md)。页面与 CLI 共用同一份本地配置，支持版本冲突检测。
+
+## 7. 会话上下文与 MCP
+
+[会话短期记忆](session-memory.md)说明上下文有效期、字符预算及 CLI／页面重置入口；[MCP 接口规范](mcp-spec.md)记录已实现工具、权限边界、MCP 服务端启动命令及客户端配置。
